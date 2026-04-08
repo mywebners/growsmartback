@@ -1,9 +1,11 @@
-# TODO: Fix train_model.py Error
+# Fix python app.py not running
 
-**Approved Plan Steps:**
-1. [x] Edit train_model.py: Remove duplicate data loading/cleaning block using wrong filename.
-2. [x] Insert training preparation code after preview using existing cleaned data.
-3. [x] Test by running `python train_model.py` to confirm model saves without errors.
-4. [x] attempt_completion once verified.
+**Progress:**
+- [x] Step 1: Updated TODO.md
+- [x] Step 2: Created clean stable requirements.txt
+- [x] Step 3: Recreated venv (deps installed)
+- [x] Step 4: Verified unicodedata/Flask ready
+- [x] Step 5: Added missing flask-cors to requirements.txt
+- [ ] Step 6: Run `pip install -r requirements.txt` then `python app.py`
 
-**Progress:** Task complete! TODO.md can be deleted if desired.
+

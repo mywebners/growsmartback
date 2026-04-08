@@ -32,4 +32,4 @@ app.post("/forgot", async (req, res) => {
   res.send("Password Updated");
 });
 
-app.listen(5000, () => console.log("Server running"));
+// app.listen(5000, () => console.log("Server running")); // DISABLED - Flask using port 5000
