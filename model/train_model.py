@@ -41,6 +41,7 @@ mapping = {
     "POOR": 0
 }
 
+# P1..P8 = ranked subject strength (best→worst); API aligns via utils.career_scoring.marks_to_pslots_sorted
 performance_cols = ["P1","P2","P3","P4","P5","P6","P7","P8"]
 
 for col in performance_cols:
@@ -70,7 +71,7 @@ y_encoded = le.fit_transform(y)
 # ==============================
 
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y_encoded, test_size=0.2, random_state=42
+    X, y_encoded, test_size=0.2, random_state=42, stratify=y_encoded
 )
 
 
@@ -82,6 +83,7 @@ model = RandomForestClassifier(
     n_estimators=300,
     max_depth=15,
     min_samples_split=5,
+    class_weight="balanced",
     random_state=42
 )
 
