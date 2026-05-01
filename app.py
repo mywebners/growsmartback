@@ -10,7 +10,7 @@ import datetime
 import os
 from dotenv import load_dotenv
 
-from utils.career_scoring import blend_career_probabilities, marks_to_pslots_sorted
+from utils.career_scoring import marks_to_pslots_sorted, blend_career_probabilities
 
 load_dotenv()
 
@@ -193,6 +193,22 @@ def predict_career():
             return mapping.get(value.strip().upper())
         return None
 
+    def normalize_skill_input(value):
+        """Map UI 1–5 or LOW/MEDIUM/HIGH to model scale 1–3 (same as frontend convertSkill)."""
+        if isinstance(value, (int, float)):
+            v = int(round(float(value)))
+            if 1 <= v <= 5:
+                if v <= 2:
+                    return 1
+                if v == 3:
+                    return 2
+                return 3
+            if 1 <= v <= 3:
+                return v
+        if isinstance(value, str):
+            return skill_map.get(value.strip().upper())
+        return None
+
     def pick_skill_value(payload, keys):
         for key in keys:
             if key in payload:
@@ -225,20 +241,18 @@ def predict_career():
             P7 = normalize_level(data["P7"], performance_map)
             P8 = normalize_level(data["P8"], performance_map)
 
-        Linguistic = normalize_level(data["Linguistic"], skill_map)
-        Musical = normalize_level(data["Musical"], skill_map)
-        Bodily = normalize_level(data["Bodily"], skill_map)
-        Logical = normalize_level(
-            pick_skill_value(data, ["Logical", "Logical - Mathematical"]),
-            skill_map
+        Linguistic = normalize_skill_input(data["Linguistic"])
+        Musical = normalize_skill_input(data["Musical"])
+        Bodily = normalize_skill_input(data["Bodily"])
+        Logical = normalize_skill_input(
+            pick_skill_value(data, ["Logical", "Logical - Mathematical"])
         )
-        Spatial = normalize_level(
-            pick_skill_value(data, ["Spatial", "Spatial-Visualization"]),
-            skill_map
+        Spatial = normalize_skill_input(
+            pick_skill_value(data, ["Spatial", "Spatial-Visualization"])
         )
-        Interpersonal = normalize_level(data["Interpersonal"], skill_map)
-        Intrapersonal = normalize_level(data["Intrapersonal"], skill_map)
-        Naturalist = normalize_level(data["Naturalist"], skill_map)
+        Interpersonal = normalize_skill_input(data["Interpersonal"])
+        Intrapersonal = normalize_skill_input(data["Intrapersonal"])
+        Naturalist = normalize_skill_input(data["Naturalist"])
     except KeyError as e:
         return jsonify({"message": f"Invalid or missing field: {str(e)}"}), 400
     except TypeError as e:
@@ -277,33 +291,45 @@ def predict_career():
     if hasattr(model, "predict_proba"):
         probs = model.predict_proba(input_data)[0]
         classes = np.asarray(encoder.classes_)
-        n_classes = len(probs)
-        all_indices = np.arange(n_classes, dtype=int)
+        class_indices = list(range(len(probs)))
+        class_labels = [str(c) for c in classes]
 
-        blended = blend_career_probabilities(
-            probs,
-            list(all_indices),
-            list(classes),
-            matric_stream,
-            intermediate_stream,
-            normalized,
+        adjusted = blend_career_probabilities(
+            probs=probs,
+            class_indices=class_indices,
+            career_labels=class_labels,
+            matric_stream=matric_stream,
+            intermediate_stream=intermediate_stream,
+            skills={
+                "Linguistic": Linguistic,
+                "Musical": Musical,
+                "Bodily": Bodily,
+                "Logical": Logical,
+                "Spatial": Spatial,
+                "Interpersonal": Interpersonal,
+                "Intrapersonal": Intrapersonal,
+                "Naturalist": Naturalist,
+            }
         )
 
-        top_k = min(5, len(blended))
-        blend_slice = blended[:top_k]
-        blend_total = sum(s for _, s in blend_slice) or 1e-9
+        # Return 4 strong aligned options (student gets choice without irrelevant careers).
+        top_k = min(4, len(adjusted))
+        top_idx = [idx for idx, _ in adjusted[:top_k]]
+        adjusted_sum = float(sum(score for _, score in adjusted[:top_k])) or 1e-9
 
         top_results = []
-        for idx, blend_w in blend_slice:
+        for idx, adj_score in adjusted[:top_k]:
             idx = int(idx)
+            p = float(probs[idx])
             top_results.append({
                 "career": str(classes[idx]),
-                "confidence": round(float(probs[idx]) * 100, 2),
-                "blend_confidence": round(100.0 * float(blend_w) / blend_total, 2),
+                "confidence": round(p * 100, 2),
+                "blend_confidence": round(100.0 * float(adj_score) / adjusted_sum, 2),
             })
 
+        best = int(top_idx[0])
         return jsonify({
-            "predicted_career": top_results[0]["career"],
+            "predicted_career": str(classes[best]),
             "top_careers": top_results,
             "used_sorted_pslots": use_sorted_slots,
         })

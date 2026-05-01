@@ -123,6 +123,13 @@ _EDU_LANG = (
     "writer",
     "translator",
 )
+_ALWAYS_EXCLUDE = (
+    # User requirement: teacher careers should never be predicted.
+    "teacher",
+    "pre primary teacher",
+    "primary teacher",
+    "school teacher",
+)
 
 
 def _has_any(c: str, needles: Sequence[str]) -> bool:
@@ -291,6 +298,11 @@ def blend_career_probabilities(
 
     scored: List[Tuple[int, float]] = []
     for idx, label in zip(class_indices, career_labels):
+        normalized_label = _norm(str(label))
+        if _has_any(normalized_label, _ALWAYS_EXCLUDE):
+            # Hard-block careers the product owner does not want to show.
+            continue
+
         base = float(probs[idx])
         sm = stream_domain_multiplier(label, matric_stream, intermediate_stream)
         km = skill_alignment_multiplier(

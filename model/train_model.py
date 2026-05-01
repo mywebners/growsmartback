@@ -1,10 +1,12 @@
 import pandas as pd
-import pickle
+import joblib
 
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 
 
 # ==============================
@@ -76,16 +78,25 @@ X_train, X_test, y_train, y_test = train_test_split(
 
 
 # ==============================
-# 7. TRAIN MODEL (Random Forest)
+# 7. TRAIN MODEL (Deep Learning: MLP)
 # ==============================
-
-model = RandomForestClassifier(
-    n_estimators=300,
-    max_depth=15,
-    min_samples_split=5,
-    class_weight="balanced",
-    random_state=42
-)
+#
+# We keep the same dataset/features but switch to a neural-network based classifier.
+model = Pipeline(steps=[
+    ("scaler", StandardScaler()),
+    ("mlp", MLPClassifier(
+        hidden_layer_sizes=(128, 64, 32),
+        activation="relu",
+        solver="adam",
+        alpha=1e-4,
+        learning_rate_init=0.001,
+        batch_size=16,
+        max_iter=900,
+        early_stopping=True,
+        n_iter_no_change=30,
+        random_state=42
+    ))
+])
 
 model.fit(X_train, y_train)
 
@@ -106,8 +117,7 @@ print("Accuracy:", accuracy)
 # ==============================
 # 9. SAVE MODEL
 # ==============================
-
-pickle.dump(model, open("model/model.pkl", "wb"))
-pickle.dump(le, open("model/encoder.pkl", "wb"))
+joblib.dump(model, "model/model.pkl")
+joblib.dump(le, "model/encoder.pkl")
 
 print("Model Saved ✅")
