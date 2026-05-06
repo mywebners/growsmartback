@@ -8,6 +8,9 @@ import bcrypt
 import jwt
 import datetime
 import os
+import json
+from urllib import request as urlrequest
+from urllib.error import URLError, HTTPError
 from dotenv import load_dotenv
 
 from utils.career_scoring import marks_to_pslots_sorted, blend_career_probabilities
@@ -17,11 +20,7 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
-# ====================================
-# MongoDB Connection
-# ====================================
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
-# If .env contains an unfinished Atlas URI, fallback to local MongoDB.
 if "<db_password>" in MONGO_URI:
     MONGO_URI = "mongodb://localhost:27017/"
 client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
@@ -29,15 +28,11 @@ db = client["growsmart"]
 users = db["users"]
 
 SECRET_KEY = os.getenv("SECRET_KEY", "anas_secret_123")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
-# ====================================
-# Load ML Model (robust path resolution)
-# ====================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Try both common locations:
-# 1) growsmartback/model/
-# 2) project-root/model/
 candidate_dirs = [
     os.path.join(BASE_DIR, "model"),
     os.path.join(BASE_DIR, "..", "model"),
@@ -68,17 +63,12 @@ else:
         "until model files are added."
     )
 
-# ====================================
-# HOME
-# ====================================
+
 @app.route("/")
 def home():
     return "GrowSmart API Running"
 
 
-# ====================================
-# REGISTER
-# ====================================
 @app.route("/auth/register", methods=["POST"])
 def register():
     data = request.json or {}
@@ -107,9 +97,6 @@ def register():
     return jsonify({"message": "User registered successfully"}), 201
 
 
-# ====================================
-# LOGIN
-# ====================================
 @app.route("/auth/login", methods=["POST"])
 def login():
     data = request.json or {}
@@ -147,9 +134,6 @@ def login():
     })
 
 
-# ====================================
-# FORGOT PASSWORD
-# ====================================
 @app.route("/auth/forgot-password", methods=["POST"])
 def forgot_password():
     data = request.json or {}
@@ -171,9 +155,6 @@ def forgot_password():
     return jsonify({"message": "Password reset to 123456"})
 
 
-# ====================================
-# CAREER PREDICTION
-# ====================================
 @app.route("/predict-career", methods=["POST"])
 def predict_career():
     if model is None or encoder is None:
@@ -311,20 +292,28 @@ def predict_career():
                 "Naturalist": Naturalist,
             }
         )
+        if not adjusted:
+            return jsonify({
+                "message": "No valid careers found after applying alignment rules."
+            }), 422
 
-        # Return 4 strong aligned options (student gets choice without irrelevant careers).
         top_k = min(4, len(adjusted))
-        top_idx = [idx for idx, _ in adjusted[:top_k]]
-        adjusted_sum = float(sum(score for _, score in adjusted[:top_k])) or 1e-9
+        top_rows = adjusted[:top_k]
+        top_idx = [row["idx"] for row in top_rows]
 
         top_results = []
-        for idx, adj_score in adjusted[:top_k]:
-            idx = int(idx)
+        for row in top_rows:
+            idx = int(row["idx"])
             p = float(probs[idx])
             top_results.append({
                 "career": str(classes[idx]),
                 "confidence": round(p * 100, 2),
-                "blend_confidence": round(100.0 * float(adj_score) / adjusted_sum, 2),
+                "why": row.get("why", []),
+                "fit_breakdown": {
+                    "brain": round(float(row.get("brain_fit", 0.0)) * 100, 1),
+                    "academic": round(float(row.get("academic_fit", 0.0)) * 100, 1),
+                    "model": round(float(row.get("model_fit", 0.0)) * 100, 1),
+                },
             })
 
         best = int(top_idx[0])
@@ -342,8 +331,285 @@ def predict_career():
     })
 
 
-# ====================================
-# RUN SERVER
-# ====================================
+_DEFAULT_INSTITUTES = [
+    "NAVTTC certified institutes",
+    "TEVTA Punjab technical centers",
+    "PITB and DigiSkills partner programs",
+    "NUTECH professional diplomas",
+    "Corvit and Aptech skill tracks",
+    "NED academy extension programs",
+]
+
+
+def _pack_insights(career, degrees, universities, proficiency_pct, institutes=None):
+    degrees = [str(d).strip() for d in degrees if str(d).strip()]
+    universities = [str(u).strip() for u in universities if str(u).strip()]
+    pcts = list(proficiency_pct or [])
+    while len(pcts) < len(degrees):
+        pcts.append(max(35, 72 - len(pcts) * 6))
+    job_proficiency = []
+    for i, deg in enumerate(degrees):
+        try:
+            pct = max(1, min(100, int(round(float(pcts[i])))))
+        except (TypeError, ValueError, IndexError):
+            pct = max(35, 72 - i * 6)
+        job_proficiency.append({"degree": deg, "percentage": pct})
+    return {
+        "career": career,
+        "degrees": degrees,
+        "top_universities": universities[:10],
+        "job_proficiency": job_proficiency,
+        "institutes": institutes or _DEFAULT_INSTITUTES,
+    }
+
+
+def _fallback_career_insights(career):
+    c = (career or "").lower()
+    tech_kw = (
+        "program", "software", "developer", "computer", "data", "ict",
+        "it ", "network", "cyber", "web", "mobile", "engineer", "ai ",
+        "machine learning", "database"
+    )
+    med_kw = ("doctor", "medical", "physician", "surgeon", "mbbs", "dent", "nurse", "pharma")
+    biz_kw = ("business", "account", "finance", "marketing", "management", "commerce")
+
+    if any(k in c for k in tech_kw):
+        degrees = [
+            "BS Computer Science (BSCS)",
+            "BS Software Engineering (BSSE)",
+            "BS Information Technology (BSIT)",
+            "BS Data Science",
+            "Associate Degree Program (ADP) / ADA in Computing",
+            "Diploma of Associate Engineer (DAE) — Computer / IT",
+        ]
+        unis = [
+            "FAST-NUCES (Islamabad, Lahore, Karachi)",
+            "NUST — SEECS / SCEE",
+            "COMSATS University",
+            "ITU Lahore",
+            "GIKI — Faculty of Computer Science",
+            "UET Lahore — Computer Science & Engineering",
+            "Bahria University — Computing",
+            "Air University — Aerospace / Computing",
+            "NED University — Computer & Info Systems",
+            "University of the Punjab — IT / CS departments",
+        ]
+        pcts = [82, 79, 74, 71, 62, 55]
+        return _pack_insights(career, degrees, unis, pcts)
+
+    if any(k in c for k in med_kw):
+        degrees = [
+            "MBBS",
+            "BDS (Dentistry)",
+            "Doctor of Pharmacy (Pharm-D)",
+            "BS Nursing (Generic)",
+            "Doctor of Physical Therapy (DPT)",
+            "BS Medical Laboratory Technology (BSMLT)",
+        ]
+        unis = [
+            "King Edward Medical University",
+            "Allama Iqbal Medical College",
+            "Dow University of Health Sciences",
+            "Aga Khan University",
+            "Army Medical College (NUMS)",
+            "Fatima Jinnah Medical University",
+            "KEMU / affiliated teaching hospitals network",
+            "LUMHS Jamshoro",
+            "Khyber Medical University",
+            "Islamabad Medical & Dental College",
+        ]
+        pcts = [84, 71, 76, 69, 63, 58]
+        return _pack_insights(career, degrees, unis, pcts)
+
+    if any(k in c for k in biz_kw):
+        degrees = [
+            "BBA / BS Business Administration",
+            "BS Accounting & Finance",
+            "BS Economics",
+            "MBA / MS Management",
+            "ACCA / CA pathway (with degree)",
+            "Diploma / certificate in digital marketing / HR",
+        ]
+        unis = [
+            "IBA Karachi",
+            "LUMS",
+            "University of the Punjab — Hailey College",
+            "Institute of Management Sciences (IMS) Lahore",
+            "SZABIST",
+            "FAST School of Management",
+            "NUST Business School",
+            "University of Karachi — Commerce",
+            "Bahria University — Management Sciences",
+            "COMSATS — Management Sciences",
+        ]
+        pcts = [77, 73, 68, 72, 61, 54]
+        return _pack_insights(career, degrees, unis, pcts)
+
+    degrees = [
+        f"BS / undergraduate degree aligned with {career}",
+        "Associate Degree Program (ADP) in a related discipline",
+        "Diploma / certificate from HEC-recognized institute",
+        "Graduate / master's (MS / MPhil) in related field",
+        "Professional certification or licensing pathway",
+        "Short vocational train-the-trainer / NAVTTC skill course",
+    ]
+    unis = [
+        "University of the Punjab",
+        "University of Karachi",
+        "University of Peshawar",
+        "Bahauddin Zakariya University",
+        "Government College University (GCU) Lahore",
+        "COMSATS University",
+        "NUML",
+        "Virtual University of Pakistan",
+        "Allama Iqbal Open University",
+        "IBA / SZABIST / regional reputable departments",
+    ]
+    pcts = [70, 58, 52, 66, 48, 44]
+    return _pack_insights(career, degrees, unis, pcts)
+
+
+def _merge_job_proficiency(degrees, raw_rows, legacy_related_fields):
+    """Align percentages with canonical degree list (Pakistan job-market proxy %)."""
+    rows = raw_rows or []
+    normalized = []
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        deg = str(item.get("degree") or item.get("field") or "").strip()
+        pct = item.get("percentage", item.get("pct"))
+        try:
+            pct = max(1, min(100, int(round(float(pct)))))
+        except (TypeError, ValueError):
+            continue
+        if deg:
+            normalized.append({"degree": deg.lower(), "percentage": pct})
+
+    by_name = {r["degree"]: r["percentage"] for r in normalized}
+    pcts = []
+    for i, deg in enumerate(degrees):
+        key = deg.lower()
+        pct = None
+        if i < len(rows) and isinstance(rows[i], dict):
+            try:
+                pct = max(1, min(100, int(round(float(rows[i].get("percentage", 0))))))
+            except (TypeError, ValueError):
+                pct = None
+        if pct is None:
+            pct = by_name.get(key)
+        if pct is None:
+            for cand, val in by_name.items():
+                if cand in key or key in cand:
+                    pct = val
+                    break
+        if pct is None and i < len(legacy_related_fields):
+            try:
+                pct = max(1, min(100, int(round(float(legacy_related_fields[i].get("percentage", 0))))))
+            except (TypeError, ValueError, IndexError):
+                pct = None
+        if pct is None:
+            pct = max(38, min(88, 76 - i * 7))
+        pcts.append(int(pct))
+    return pcts
+
+
+def _finalize_insights_payload(parsed, career):
+    degrees = [str(x).strip() for x in (parsed.get("degrees") or []) if str(x).strip()]
+    universities = [str(x).strip() for x in (parsed.get("top_universities") or []) if str(x).strip()]
+    institutes = [str(x).strip() for x in (parsed.get("institutes") or []) if str(x).strip()]
+    legacy_related = parsed.get("related_fields") or []
+    if not isinstance(legacy_related, list):
+        legacy_related = []
+
+    if len(degrees) < 4:
+        if legacy_related and len(degrees) == 0:
+            degrees = [
+                str(x.get("field", "")).strip()
+                for x in legacy_related
+                if str(x.get("field", "")).strip()
+            ]
+        if len(degrees) < 4:
+            return None
+
+    jp_raw = parsed.get("job_proficiency") or parsed.get("job_proficiencies") or []
+    pcts = _merge_job_proficiency(degrees, jp_raw, legacy_related)
+
+    packed = _pack_insights(
+        parsed.get("career") or career,
+        degrees,
+        universities,
+        pcts,
+        institutes if len(institutes) >= 3 else None,
+    )
+    if len(packed["top_universities"]) < 6:
+        return None
+    return packed
+
+
+@app.route("/career-insights", methods=["POST"])
+def career_insights():
+    payload = request.json or {}
+    career = str(payload.get("career", "")).strip()
+    if not career:
+        return jsonify({"message": "career is required"}), 400
+
+    if not OPENAI_API_KEY:
+        return jsonify(_fallback_career_insights(career))
+
+    prompt = (
+        "You are a Pakistan higher-education and labour-market advisor.\n"
+        f'Career title: "{career}"\n'
+        "Return strict JSON only (no markdown) with keys exactly:\n"
+        "{\n"
+        '  "career": string,\n'
+        '  "degrees": string[],\n'
+        '  "top_universities": string[],\n'
+        '  "job_proficiency": [{"degree": string, "percentage": number}],\n'
+        '  "institutes": string[]\n'
+        "}\n"
+        "Rules:\n"
+        "- degrees: 6 to 8 items — concrete Pakistan-style qualifications "
+        "(e.g. BS/BSc names, MBBS, diplomas, ADP, DAE, MS/MPhil where relevant).\n"
+        "- top_universities: exactly 10 distinct Pakistan universities or campuses "
+        "that are especially strong for those degrees (not random rankings).\n"
+        "- job_proficiency: same length and same order as degrees; each percentage "
+        "is an approximate Pakistan job-market alignment score (1–100) for holders "
+        "of that qualification toward this career.\n"
+        "- institutes: 4 to 6 vocational / diploma / skills bodies (e.g. NAVTTC, "
+        "TEVTA centres, sector skills councils) relevant to this career.\n"
+        "- Use realistic Pakistani naming; avoid non-Pakistan institutions.\n"
+    )
+
+    req_body = {
+        "model": OPENAI_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.35,
+        "response_format": {"type": "json_object"},
+    }
+
+    try:
+        req = urlrequest.Request(
+            "https://api.openai.com/v1/chat/completions",
+            data=json.dumps(req_body).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urlrequest.urlopen(req, timeout=25) as resp:
+            raw = resp.read().decode("utf-8")
+            data_obj = json.loads(raw)
+            content = data_obj["choices"][0]["message"]["content"]
+            parsed = json.loads(content)
+    except (HTTPError, URLError, KeyError, ValueError, TimeoutError):
+        return jsonify(_fallback_career_insights(career))
+
+    finalized = _finalize_insights_payload(parsed, career)
+    if finalized is None:
+        return jsonify(_fallback_career_insights(career))
+    return jsonify(finalized)
+
+
 if __name__ == "__main__":
     app.run(debug=True)

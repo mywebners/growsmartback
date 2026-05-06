@@ -40,7 +40,6 @@ def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "").strip().lower())
 
 
-# Keyword groups (substring match on career label)
 _TECH = (
     "software",
     "developer",
@@ -124,7 +123,6 @@ _EDU_LANG = (
     "translator",
 )
 _ALWAYS_EXCLUDE = (
-    # User requirement: teacher careers should never be predicted.
     "teacher",
     "pre primary teacher",
     "primary teacher",
@@ -134,6 +132,13 @@ _ALWAYS_EXCLUDE = (
 
 def _has_any(c: str, needles: Sequence[str]) -> bool:
     return any(n in c for n in needles)
+
+
+def _to_unit(value: float, low: float, high: float) -> float:
+    if high <= low:
+        return 0.0
+    v = (value - low) / (high - low)
+    return max(0.0, min(1.0, v))
 
 
 def stream_domain_multiplier(
@@ -283,9 +288,11 @@ def blend_career_probabilities(
     matric_stream: Optional[str],
     intermediate_stream: Optional[str],
     skills: Mapping[str, int],
-) -> List[Tuple[int, float]]:
+) -> List[Dict[str, Any]]:
     """
-    Returns list of (class_index, adjusted_score) sorted by adjusted_score descending.
+    Human-first weighted ranking:
+    final = 0.45 * brain_fit + 0.35 * academic_fit + 0.20 * model_fit
+    Returns ranked rows with explainable components.
     """
     logical = int(skills.get("Logical", skills.get("Logical - Mathematical", 2)))
     spatial = int(skills.get("Spatial", skills.get("Spatial-Visualization", 2)))
@@ -296,11 +303,13 @@ def blend_career_probabilities(
     bodily = int(skills.get("Bodily", 2))
     naturalist = int(skills.get("Naturalist", 2))
 
-    scored: List[Tuple[int, float]] = []
+    logical_spatial_avg = (logical + spatial) / 2.0
+    communication_self_avg = (linguistic + interpersonal + intrapersonal) / 3.0
+
+    scored: List[Dict[str, Any]] = []
     for idx, label in zip(class_indices, career_labels):
         normalized_label = _norm(str(label))
         if _has_any(normalized_label, _ALWAYS_EXCLUDE):
-            # Hard-block careers the product owner does not want to show.
             continue
 
         base = float(probs[idx])
@@ -309,7 +318,35 @@ def blend_career_probabilities(
             label, logical, spatial, linguistic, interpersonal,
             intrapersonal, musical, bodily, naturalist,
         )
-        scored.append((idx, base * sm * km))
+        model_fit = max(0.0, min(1.0, base))
+        academic_fit = _to_unit(sm, 0.15, 2.8)
+        brain_fit = _to_unit(km, 0.5, 1.35)
 
-    scored.sort(key=lambda x: x[1], reverse=True)
+        final_score = (0.45 * brain_fit) + (0.35 * academic_fit) + (0.20 * model_fit)
+
+        why: List[str] = []
+        if intermediate_stream:
+            why.append(f"Intermediate stream ({intermediate_stream}) alignment considered.")
+        if matric_stream:
+            why.append(f"Matric stream ({matric_stream}) background considered.")
+
+        if logical_spatial_avg >= 2.5 and _has_any(normalized_label, _TECH + _ENGINEERING):
+            why.append("Strong logical + spatial pattern supports technical/problem-solving roles.")
+        if communication_self_avg >= 2.2 and _has_any(normalized_label, _EDU_LANG + _LEGAL_BUSINESS + _PSY_SOCIAL):
+            why.append("Communication and self-awareness profile supports people/communication domains.")
+        if naturalist >= 2 and _has_any(normalized_label, _MEDICAL + ("biology", "environment", "research")):
+            why.append("Naturalist/observation tendency adds support for science-oriented directions.")
+        if not why:
+            why.append("This career best matches your combined marks, stream, and brain-skill profile.")
+
+        scored.append({
+            "idx": int(idx),
+            "final_score": float(final_score),
+            "model_fit": model_fit,
+            "academic_fit": academic_fit,
+            "brain_fit": brain_fit,
+            "why": why,
+        })
+
+    scored.sort(key=lambda x: x["final_score"], reverse=True)
     return scored

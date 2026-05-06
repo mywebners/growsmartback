@@ -6,7 +6,6 @@ from utils.preprocess import map_subjects_to_pslots
 
 predict_bp = Blueprint("predict", __name__)
 
-# Load model
 model = pickle.load(open("model/model.pkl", "rb"))
 encoder = pickle.load(open("model/encoder.pkl", "rb"))
 
@@ -19,10 +18,8 @@ def predict_career():
         marks = data.get("marks")
         skills = data.get("skills")
 
-        # Convert marks → P1–P8
         p_slots = map_subjects_to_pslots(marks)
 
-        # Maintain SAME order as dataset
         skill_order = [
             "Linguistic",
             "Musical",
@@ -36,17 +33,14 @@ def predict_career():
 
         input_data = []
 
-        # Add P slots
         for i in range(1, 9):
             input_data.append(p_slots[f"P{i}"])
 
-        # Add skills in correct order
         for skill in skill_order:
             input_data.append(skills.get(skill, 0))
 
         input_array = np.array(input_data).reshape(1, -1)
 
-        # Prediction
         probs = model.predict_proba(input_array)[0]
 
         top_3_idx = probs.argsort()[-3:][::-1]

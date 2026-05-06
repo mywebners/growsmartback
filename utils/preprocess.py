@@ -1,10 +1,10 @@
 def convert_marks_to_category(mark):
     if mark >= 80:
-        return 2   # BEST
+        return 2
     elif mark >= 60:
-        return 1   # AVG
+        return 1
     else:
-        return 0   # POOR
+        return 0
 
 
 def map_subjects_to_pslots(marks_dict):
@@ -16,7 +16,6 @@ def map_subjects_to_pslots(marks_dict):
         subject, marks = sorted_subjects[i]
         p_slots[f"P{i+1}"] = convert_marks_to_category(marks)
 
-    # Fill remaining slots
     for i in range(len(sorted_subjects), 8):
         p_slots[f"P{i+1}"] = 0
 

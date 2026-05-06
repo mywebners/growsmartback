@@ -17,7 +17,6 @@ users = db["users"]
 SECRET_KEY = os.getenv("SECRET_KEY")
 
 
-# ================= REGISTER =================
 @auth_routes.route("/register", methods=["POST"])
 def register():
 
@@ -37,7 +36,6 @@ def register():
     return jsonify({"message": "User registered successfully"})
 
 
-# ================= LOGIN =================
 @auth_routes.route("/login", methods=["POST"])
 def login():
 
@@ -62,7 +60,6 @@ def login():
     })
 
 
-# ================= FORGOT PASSWORD =================
 @auth_routes.route("/forgot-password", methods=["POST"])
 def forgot_password():
 
@@ -73,7 +70,6 @@ def forgot_password():
     if not user:
         return jsonify({"message": "User not found"}), 404
 
-    # Simple reset (for now)
     new_password = bcrypt.hashpw("123456".encode(), bcrypt.gensalt())
 
     users.update_one(
