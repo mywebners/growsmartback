@@ -331,144 +331,6 @@ def predict_career():
     })
 
 
-_DEFAULT_INSTITUTES = [
-    "NAVTTC certified institutes",
-    "TEVTA Punjab technical centers",
-    "PITB and DigiSkills partner programs",
-    "NUTECH professional diplomas",
-    "Corvit and Aptech skill tracks",
-    "NED academy extension programs",
-]
-
-
-def _pack_insights(career, degrees, universities, proficiency_pct, institutes=None):
-    degrees = [str(d).strip() for d in degrees if str(d).strip()]
-    universities = [str(u).strip() for u in universities if str(u).strip()]
-    pcts = list(proficiency_pct or [])
-    while len(pcts) < len(degrees):
-        pcts.append(max(35, 72 - len(pcts) * 6))
-    job_proficiency = []
-    for i, deg in enumerate(degrees):
-        try:
-            pct = max(1, min(100, int(round(float(pcts[i])))))
-        except (TypeError, ValueError, IndexError):
-            pct = max(35, 72 - i * 6)
-        job_proficiency.append({"degree": deg, "percentage": pct})
-    return {
-        "career": career,
-        "degrees": degrees,
-        "top_universities": universities[:10],
-        "job_proficiency": job_proficiency,
-        "institutes": institutes or _DEFAULT_INSTITUTES,
-    }
-
-
-def _fallback_career_insights(career):
-    c = (career or "").lower()
-    tech_kw = (
-        "program", "software", "developer", "computer", "data", "ict",
-        "it ", "network", "cyber", "web", "mobile", "engineer", "ai ",
-        "machine learning", "database"
-    )
-    med_kw = ("doctor", "medical", "physician", "surgeon", "mbbs", "dent", "nurse", "pharma")
-    biz_kw = ("business", "account", "finance", "marketing", "management", "commerce")
-
-    if any(k in c for k in tech_kw):
-        degrees = [
-            "BS Computer Science (BSCS)",
-            "BS Software Engineering (BSSE)",
-            "BS Information Technology (BSIT)",
-            "BS Data Science",
-            "Associate Degree Program (ADP) / ADA in Computing",
-            "Diploma of Associate Engineer (DAE) — Computer / IT",
-        ]
-        unis = [
-            "FAST-NUCES (Islamabad, Lahore, Karachi)",
-            "NUST — SEECS / SCEE",
-            "COMSATS University",
-            "ITU Lahore",
-            "GIKI — Faculty of Computer Science",
-            "UET Lahore — Computer Science & Engineering",
-            "Bahria University — Computing",
-            "Air University — Aerospace / Computing",
-            "NED University — Computer & Info Systems",
-            "University of the Punjab — IT / CS departments",
-        ]
-        pcts = [82, 79, 74, 71, 62, 55]
-        return _pack_insights(career, degrees, unis, pcts)
-
-    if any(k in c for k in med_kw):
-        degrees = [
-            "MBBS",
-            "BDS (Dentistry)",
-            "Doctor of Pharmacy (Pharm-D)",
-            "BS Nursing (Generic)",
-            "Doctor of Physical Therapy (DPT)",
-            "BS Medical Laboratory Technology (BSMLT)",
-        ]
-        unis = [
-            "King Edward Medical University",
-            "Allama Iqbal Medical College",
-            "Dow University of Health Sciences",
-            "Aga Khan University",
-            "Army Medical College (NUMS)",
-            "Fatima Jinnah Medical University",
-            "KEMU / affiliated teaching hospitals network",
-            "LUMHS Jamshoro",
-            "Khyber Medical University",
-            "Islamabad Medical & Dental College",
-        ]
-        pcts = [84, 71, 76, 69, 63, 58]
-        return _pack_insights(career, degrees, unis, pcts)
-
-    if any(k in c for k in biz_kw):
-        degrees = [
-            "BBA / BS Business Administration",
-            "BS Accounting & Finance",
-            "BS Economics",
-            "MBA / MS Management",
-            "ACCA / CA pathway (with degree)",
-            "Diploma / certificate in digital marketing / HR",
-        ]
-        unis = [
-            "IBA Karachi",
-            "LUMS",
-            "University of the Punjab — Hailey College",
-            "Institute of Management Sciences (IMS) Lahore",
-            "SZABIST",
-            "FAST School of Management",
-            "NUST Business School",
-            "University of Karachi — Commerce",
-            "Bahria University — Management Sciences",
-            "COMSATS — Management Sciences",
-        ]
-        pcts = [77, 73, 68, 72, 61, 54]
-        return _pack_insights(career, degrees, unis, pcts)
-
-    degrees = [
-        f"BS / undergraduate degree aligned with {career}",
-        "Associate Degree Program (ADP) in a related discipline",
-        "Diploma / certificate from HEC-recognized institute",
-        "Graduate / master's (MS / MPhil) in related field",
-        "Professional certification or licensing pathway",
-        "Short vocational train-the-trainer / NAVTTC skill course",
-    ]
-    unis = [
-        "University of the Punjab",
-        "University of Karachi",
-        "University of Peshawar",
-        "Bahauddin Zakariya University",
-        "Government College University (GCU) Lahore",
-        "COMSATS University",
-        "NUML",
-        "Virtual University of Pakistan",
-        "Allama Iqbal Open University",
-        "IBA / SZABIST / regional reputable departments",
-    ]
-    pcts = [70, 58, 52, 66, 48, 44]
-    return _pack_insights(career, degrees, unis, pcts)
-
-
 def _merge_job_proficiency(degrees, raw_rows, legacy_related_fields):
     """Align percentages with canonical degree list (Pakistan job-market proxy %)."""
     rows = raw_rows or []
@@ -534,16 +396,17 @@ def _finalize_insights_payload(parsed, career):
     jp_raw = parsed.get("job_proficiency") or parsed.get("job_proficiencies") or []
     pcts = _merge_job_proficiency(degrees, jp_raw, legacy_related)
 
-    packed = _pack_insights(
-        parsed.get("career") or career,
-        degrees,
-        universities,
-        pcts,
-        institutes if len(institutes) >= 3 else None,
-    )
-    if len(packed["top_universities"]) < 6:
+    top_universities = universities[:10]
+    if len(top_universities) < 6:
         return None
-    return packed
+    job_proficiency = [{"degree": d, "percentage": p} for d, p in zip(degrees, pcts)]
+    return {
+        "career": parsed.get("career") or career,
+        "degrees": degrees,
+        "top_universities": top_universities,
+        "job_proficiency": job_proficiency,
+        "institutes": institutes[:6],
+    }
 
 
 @app.route("/career-insights", methods=["POST"])
@@ -554,7 +417,7 @@ def career_insights():
         return jsonify({"message": "career is required"}), 400
 
     if not OPENAI_API_KEY:
-        return jsonify(_fallback_career_insights(career))
+        return jsonify({"message": "OPENAI_API_KEY is missing in .env"}), 503
 
     prompt = (
         "You are a Pakistan higher-education and labour-market advisor.\n"
@@ -602,13 +465,13 @@ def career_insights():
             data_obj = json.loads(raw)
             content = data_obj["choices"][0]["message"]["content"]
             parsed = json.loads(content)
-    except (HTTPError, URLError, KeyError, ValueError, TimeoutError):
-        return jsonify(_fallback_career_insights(career))
+    except (HTTPError, URLError, KeyError, ValueError, TimeoutError) as e:
+        return jsonify({"message": f"OpenAI request failed: {str(e)}"}), 502
 
     finalized = _finalize_insights_payload(parsed, career)
     if finalized is None:
-        return jsonify(_fallback_career_insights(career))
-    return jsonify(finalized)
+        return jsonify({"message": "OpenAI returned invalid insights payload"}), 502
+    return jsonify({**finalized, "source": "openai"})
 
 
 if __name__ == "__main__":
