@@ -1,0 +1,58 @@
+[
+  {
+    "id": "Linguistic-1",
+    "dimension": "Linguistic",
+    "model_key": "Linguistic",
+    "icon": "🗣️",
+    "text": "For a career path, how strong are you at writing clear reports, emails, proposals, or content that others can easily understand?"
+  },
+  {
+    "id": "Logical-1",
+    "dimension": "Logical",
+    "model_key": "Logical - Mathematical",
+    "icon": "🧠",
+    "text": "How comfortable are you analyzing problems, numbers, or systems step-by-step to reach a practical career decision?"
+  },
+  {
+    "id": "Spatial-1",
+    "dimension": "Spatial",
+    "model_key": "Spatial-Visualization",
+    "icon": "📐",
+    "text": "In work settings, how good are you at visual planning — designs, diagrams, layouts, maps, or imagining how things fit together?"
+  },
+  {
+    "id": "Interpersonal-1",
+    "dimension": "Interpersonal",
+    "model_key": "Interpersonal",
+    "icon": "🤝",
+    "text": "How well can you work with clients, teammates, or customers — listening, explaining, and handling disagreements calmly?"
+  },
+  {
+    "id": "Intrapersonal-1",
+    "dimension": "Intrapersonal",
+    "model_key": "Intrapersonal",
+    "icon": "🎯",
+    "text": "How clear are you about your own career strengths, weaknesses, and long-term goals without needing constant reminders?"
+  },
+  {
+    "id": "Bodily-1",
+    "dimension": "Bodily",
+    "model_key": "Bodily",
+    "icon": "🛠️",
+    "text": "How confident are you in hands-on career work — labs, fieldwork, tools, sports coaching, workshops, or practical tasks?"
+  },
+  {
+    "id": "Naturalist-1",
+    "dimension": "Naturalist",
+    "model_key": "Naturalist",
+    "icon": "🌱",
+    "text": "How interested are you in careers linked to nature, health, environment, living systems, animals, or outdoor observation?"
+  },
+  {
+    "id": "Musical-1",
+    "dimension": "Musical",
+    "model_key": "Musical",
+    "icon": "🎧",
+    "text": "For creative/media careers, how strong is your sense of rhythm, sound, media timing, or audio/visual pattern recognition?"
+  }
+]

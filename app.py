@@ -14,6 +14,7 @@ from urllib.error import URLError, HTTPError
 from dotenv import load_dotenv
 
 from utils.career_scoring import marks_to_pslots_sorted, blend_career_probabilities
+from utils.jobs_guidance_ai import call_jobs_openai
 
 load_dotenv()
 
@@ -26,12 +27,61 @@ if "<db_password>" in MONGO_URI:
 client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
 db = client["growsmart"]
 users = db["users"]
+career_questions_col = db["career_questions"]
+career_scope_col = db["career_scope"]
 
 SECRET_KEY = os.getenv("SECRET_KEY", "anas_secret_123")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATASET_DIR = os.path.join(BASE_DIR, "dataset")
+
+
+def _load_json(path, fallback):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return fallback
+
+
+CAREER_QUESTIONS_FALLBACK = _load_json(
+    os.path.join(DATASET_DIR, "career_questions.json"),
+    [],
+)
+PAKISTAN_SCOPE_DATA = _load_json(
+    os.path.join(DATASET_DIR, "pakistan_career_scope.json"),
+    {"meta": {}, "categories": {}, "career_map": {}},
+)
+
+
+def seed_career_guidance_data():
+    """Load career questions + Pakistan scope into MongoDB from dataset JSON."""
+    try:
+        if CAREER_QUESTIONS_FALLBACK:
+            career_questions_col.delete_many({})
+            docs = []
+            for i, q in enumerate(CAREER_QUESTIONS_FALLBACK):
+                docs.append({**q, "order": i, "active": True})
+            if docs:
+                career_questions_col.insert_many(docs)
+
+        career_scope_col.delete_many({})
+        career_scope_col.insert_one({
+            "key": "pakistan_v1",
+            "data": PAKISTAN_SCOPE_DATA,
+            "updated": (PAKISTAN_SCOPE_DATA.get("meta") or {}).get("updated"),
+        })
+        print("Career guidance dataset seeded into MongoDB.")
+    except PyMongoError as e:
+        print(f"Warning: could not seed career guidance collections: {e}")
+
+
+try:
+    seed_career_guidance_data()
+except Exception as e:
+    print(f"Warning: career guidance seed skipped: {e}")
 
 candidate_dirs = [
     os.path.join(BASE_DIR, "model"),
@@ -67,6 +117,105 @@ else:
 @app.route("/")
 def home():
     return "GrowSmart API Running"
+
+
+@app.route("/career-questions", methods=["GET"])
+def get_career_questions():
+    """Career-aptitude questions from MongoDB (falls back to dataset JSON)."""
+    try:
+        docs = list(
+            career_questions_col.find({"active": {"$ne": False}}, {"_id": 0})
+            .sort("order", 1)
+        )
+        if docs:
+            return jsonify({"success": True, "source": "database", "questions": docs})
+    except PyMongoError:
+        pass
+
+    if CAREER_QUESTIONS_FALLBACK:
+        return jsonify({
+            "success": True,
+            "source": "dataset",
+            "questions": CAREER_QUESTIONS_FALLBACK,
+        })
+    return jsonify({"success": False, "message": "No career questions found", "questions": []}), 404
+
+
+def _resolve_scope_for_career(career_name: str):
+    payload = PAKISTAN_SCOPE_DATA
+    try:
+        doc = career_scope_col.find_one({"key": "pakistan_v1"})
+        if doc and isinstance(doc.get("data"), dict):
+            payload = doc["data"]
+    except PyMongoError:
+        pass
+
+    meta = payload.get("meta") or {}
+    categories = payload.get("categories") or {}
+    career_map = payload.get("career_map") or {}
+    name = (career_name or "").strip()
+    lower = name.lower()
+
+    cat_id = career_map.get(name)
+    if not cat_id:
+        for key, value in career_map.items():
+            if key.lower() in lower or lower in key.lower():
+                cat_id = value
+                break
+    if not cat_id:
+        # keyword fallbacks
+        if any(k in lower for k in ("computer", "program", "database", "software", "analyst")):
+            cat_id = "it_software"
+        elif any(k in lower for k in ("medical", "physician", "nurse", "pharma", "therap")):
+            cat_id = "healthcare"
+        elif any(k in lower for k in ("teacher", "professor", "librarian")):
+            cat_id = "education"
+        elif any(k in lower for k in ("bank", "account", "financ", "audit", "stock", "actuary")):
+            cat_id = "finance"
+        elif any(k in lower for k in ("market", "manager", "sales", "business", "consult")):
+            cat_id = "business"
+        elif any(k in lower for k in ("design", "artist", "broadcast", "journal", "editor", "fashion")):
+            cat_id = "media_creative"
+        elif any(k in lower for k in ("engineer", "pilot", "physic")):
+            cat_id = "engineering"
+        elif any(k in lower for k in ("police", "milit", "lawyer", "politic", "crime")):
+            cat_id = "law_gov"
+        else:
+            cat_id = "business"
+
+    category = categories.get(cat_id) or {
+        "label": "General careers",
+        "overall_scope": 60,
+        "demand_note": "Mixed demand across Pakistan job portals.",
+        "platforms": {"linkedin": 25, "rozee": 30, "mustakbil": 25, "other": 20},
+    }
+
+    return {
+        "career": name,
+        "category_id": cat_id,
+        "category_label": category.get("label"),
+        "overall_scope": category.get("overall_scope"),
+        "demand_note": category.get("demand_note"),
+        "platforms": category.get("platforms") or {},
+        "portals": meta.get("portals") or [],
+        "meta_note": meta.get("note"),
+        "updated": meta.get("updated"),
+        "source": "database",
+    }
+
+
+@app.route("/career-scope", methods=["GET", "POST"])
+def career_scope():
+    if request.method == "POST":
+        body = request.json or {}
+        career = str(body.get("career", "")).strip()
+    else:
+        career = str(request.args.get("career", "")).strip()
+
+    if not career:
+        return jsonify({"message": "career is required"}), 400
+
+    return jsonify({"success": True, **_resolve_scope_for_career(career)})
 
 
 @app.route("/auth/register", methods=["POST"])
@@ -377,7 +526,6 @@ def _merge_job_proficiency(degrees, raw_rows, legacy_related_fields):
 
 def _finalize_insights_payload(parsed, career):
     degrees = [str(x).strip() for x in (parsed.get("degrees") or []) if str(x).strip()]
-    universities = [str(x).strip() for x in (parsed.get("top_universities") or []) if str(x).strip()]
     institutes = [str(x).strip() for x in (parsed.get("institutes") or []) if str(x).strip()]
     legacy_related = parsed.get("related_fields") or []
     if not isinstance(legacy_related, list):
@@ -396,14 +544,45 @@ def _finalize_insights_payload(parsed, career):
     jp_raw = parsed.get("job_proficiency") or parsed.get("job_proficiencies") or []
     pcts = _merge_job_proficiency(degrees, jp_raw, legacy_related)
 
-    top_universities = universities[:10]
-    if len(top_universities) < 6:
+    # Universities: prefer objects {name, url, programs}, accept plain strings
+    uni_raw = parsed.get("universities") or parsed.get("top_universities") or []
+    universities = []
+    if isinstance(uni_raw, list):
+        for item in uni_raw:
+            if isinstance(item, dict):
+                name = str(item.get("name") or item.get("university") or "").strip()
+                url = str(item.get("url") or item.get("portal") or item.get("link") or "").strip()
+                programs = item.get("programs") or item.get("offers") or []
+                if isinstance(programs, str):
+                    programs = [programs]
+                programs = [str(p).strip() for p in programs if str(p).strip()][:4]
+                note = str(item.get("note") or item.get("why") or "").strip()
+                if name:
+                    universities.append({
+                        "name": name,
+                        "url": url,
+                        "programs": programs,
+                        "note": note,
+                    })
+            else:
+                name = str(item).strip()
+                if name:
+                    universities.append({
+                        "name": name,
+                        "url": "",
+                        "programs": [],
+                        "note": "",
+                    })
+
+    if len(universities) < 6:
         return None
+
     job_proficiency = [{"degree": d, "percentage": p} for d, p in zip(degrees, pcts)]
     return {
         "career": parsed.get("career") or career,
         "degrees": degrees,
-        "top_universities": top_universities,
+        "universities": universities[:10],
+        "top_universities": [u["name"] for u in universities[:10]],
         "job_proficiency": job_proficiency,
         "institutes": institutes[:6],
     }
@@ -417,7 +596,7 @@ def career_insights():
         return jsonify({"message": "career is required"}), 400
 
     if not OPENAI_API_KEY:
-        return jsonify({"message": "OPENAI_API_KEY is missing in .env"}), 503
+        return jsonify({"message": "OPENAI_API_KEY is missing in .env (Cursor/backend env)"}), 503
 
     prompt = (
         "You are a Pakistan higher-education and labour-market advisor.\n"
@@ -426,27 +605,28 @@ def career_insights():
         "{\n"
         '  "career": string,\n'
         '  "degrees": string[],\n'
-        '  "top_universities": string[],\n'
+        '  "universities": [{"name": string, "url": string, "programs": string[], "note": string}],\n'
         '  "job_proficiency": [{"degree": string, "percentage": number}],\n'
         '  "institutes": string[]\n'
         "}\n"
         "Rules:\n"
         "- degrees: 6 to 8 items — concrete Pakistan-style qualifications "
-        "(e.g. BS/BSc names, MBBS, diplomas, ADP, DAE, MS/MPhil where relevant).\n"
-        "- top_universities: exactly 10 distinct Pakistan universities or campuses "
-        "that are especially strong for those degrees (not random rankings).\n"
-        "- job_proficiency: same length and same order as degrees; each percentage "
-        "is an approximate Pakistan job-market alignment score (1–100) for holders "
-        "of that qualification toward this career.\n"
-        "- institutes: 4 to 6 vocational / diploma / skills bodies (e.g. NAVTTC, "
-        "TEVTA centres, sector skills councils) relevant to this career.\n"
-        "- Use realistic Pakistani naming; avoid non-Pakistan institutions.\n"
+        "(e.g. BS CS, BS SE, BS IT, ADP Computing) relevant to this career.\n"
+        "- universities: exactly 8 to 10 distinct Pakistan universities. "
+        "Each must include: official website url (https://...), 1–3 program names "
+        "this university actually offers that lead toward this career, and a short note.\n"
+        "Use real official portals when known (nust.edu.pk, lums.edu.pk, nu.edu.pk, "
+        "comsats.edu.pk, uet.edu.pk, neduet.edu.pk, iba.edu.pk, pu.edu.pk, etc.).\n"
+        "- job_proficiency: same length/order as degrees; Pakistan job-market alignment 1–100.\n"
+        "- institutes: 4 to 6 vocational / skills bodies (NAVTTC, TEVTA, etc.).\n"
+        "- Only Pakistan institutions. No invented fake .edu domains if unsure — "
+        "use the best-known official homepage.\n"
     )
 
     req_body = {
         "model": OPENAI_MODEL,
         "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.35,
+        "temperature": 0.3,
         "response_format": {"type": "json_object"},
     }
 
@@ -460,7 +640,7 @@ def career_insights():
             },
             method="POST",
         )
-        with urlrequest.urlopen(req, timeout=25) as resp:
+        with urlrequest.urlopen(req, timeout=35) as resp:
             raw = resp.read().decode("utf-8")
             data_obj = json.loads(raw)
             content = data_obj["choices"][0]["message"]["content"]
@@ -471,7 +651,18 @@ def career_insights():
     finalized = _finalize_insights_payload(parsed, career)
     if finalized is None:
         return jsonify({"message": "OpenAI returned invalid insights payload"}), 502
-    return jsonify({**finalized, "source": "openai"})
+    return jsonify({**finalized, "source": "openai", "env": "OPENAI_API_KEY"})
+
+
+@app.route("/jobs-guidance", methods=["POST"])
+def jobs_guidance():
+    data = request.json or {}
+    ok, payload = call_jobs_openai(data, OPENAI_API_KEY, OPENAI_MODEL)
+    if ok:
+        return jsonify(payload)
+    msg = str(payload.get("message", "")).lower()
+    status = 400 if "education_level" in msg else (503 if "missing" in msg else 502)
+    return jsonify(payload), status
 
 
 if __name__ == "__main__":

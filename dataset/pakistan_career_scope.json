@@ -1,0 +1,154 @@
+{
+  "meta": {
+    "note": "Curated Pakistan job-market scope estimates for GrowSmart (relative posting share proxies across LinkedIn Pakistan, Rozee.pk, Mustakbil, and other PK portals). Not live scraped counts — updated from public market signals (P@SHA, Rozee, Qureos-style demand reports).",
+    "updated": "2026-09",
+    "portals": [
+      { "id": "linkedin", "label": "LinkedIn Pakistan", "url": "https://www.linkedin.com/jobs/" },
+      { "id": "rozee", "label": "Rozee.pk", "url": "https://www.rozee.pk/" },
+      { "id": "mustakbil", "label": "Mustakbil", "url": "https://www.mustakbil.com/" },
+      { "id": "other", "label": "Other PK portals (Bayt, Indeed, company sites)", "url": "https://pk.indeed.com/" }
+    ]
+  },
+  "categories": {
+    "it_software": {
+      "label": "IT / Software / Digital",
+      "overall_scope": 90,
+      "demand_note": "Strongest hiring cluster in Pakistan — software, data, cloud, AI-related roles lead LinkedIn and Rozee tech postings.",
+      "platforms": { "linkedin": 40, "rozee": 30, "mustakbil": 18, "other": 12 }
+    },
+    "engineering": {
+      "label": "Engineering / Technical",
+      "overall_scope": 76,
+      "demand_note": "Steady demand in civil, electrical, mechanical and industrial projects plus telecom/ops roles.",
+      "platforms": { "linkedin": 28, "rozee": 32, "mustakbil": 24, "other": 16 }
+    },
+    "healthcare": {
+      "label": "Healthcare / Medical",
+      "overall_scope": 82,
+      "demand_note": "Hospitals and allied health keep hiring doctors, nurses, therapists and support clinical roles.",
+      "platforms": { "linkedin": 22, "rozee": 30, "mustakbil": 26, "other": 22 }
+    },
+    "finance": {
+      "label": "Finance / Banking / Accounting",
+      "overall_scope": 78,
+      "demand_note": "Banks, fintech, audit and accounting firms post regularly for finance graduates and ACCA/CA tracks.",
+      "platforms": { "linkedin": 34, "rozee": 28, "mustakbil": 22, "other": 16 }
+    },
+    "business": {
+      "label": "Business / Management / Sales",
+      "overall_scope": 80,
+      "demand_note": "Sales, marketing, operations and management roles stay broad across corporate and SME markets.",
+      "platforms": { "linkedin": 33, "rozee": 31, "mustakbil": 20, "other": 16 }
+    },
+    "education": {
+      "label": "Education / Teaching",
+      "overall_scope": 72,
+      "demand_note": "Schools, academies and coaching centres hire year-round; university roles are more competitive.",
+      "platforms": { "linkedin": 20, "rozee": 34, "mustakbil": 28, "other": 18 }
+    },
+    "media_creative": {
+      "label": "Media / Design / Creative",
+      "overall_scope": 68,
+      "demand_note": "Graphic design, content, broadcasting and creative production are active, often freelance + agency mix.",
+      "platforms": { "linkedin": 30, "rozee": 26, "mustakbil": 20, "other": 24 }
+    },
+    "science_research": {
+      "label": "Science / Research",
+      "overall_scope": 55,
+      "demand_note": "Narrower local market — labs, academia, NGOs and specialized industry roles; often fewer openings than IT.",
+      "platforms": { "linkedin": 26, "rozee": 24, "mustakbil": 22, "other": 28 }
+    },
+    "law_gov": {
+      "label": "Law / Government / Security",
+      "overall_scope": 64,
+      "demand_note": "Legal, compliance, policing and government tracks exist but hiring is process-heavy and competitive.",
+      "platforms": { "linkedin": 18, "rozee": 28, "mustakbil": 24, "other": 30 }
+    },
+    "trades_ops": {
+      "label": "Trades / Operations / Support",
+      "overall_scope": 70,
+      "demand_note": "Technicians, logistics, reception and ops support roles appear frequently on Rozee and local portals.",
+      "platforms": { "linkedin": 16, "rozee": 36, "mustakbil": 28, "other": 20 }
+    },
+    "arts_culture": {
+      "label": "Arts / Culture / Writing",
+      "overall_scope": 48,
+      "demand_note": "More portfolio and freelance driven; fewer stable full-time postings than corporate tracks.",
+      "platforms": { "linkedin": 24, "rozee": 22, "mustakbil": 18, "other": 36 }
+    }
+  },
+  "career_map": {
+    "Computer programmer": "it_software",
+    "Computer analyst": "it_software",
+    "Database designer": "it_software",
+    "Engineer": "engineering",
+    "Technician": "trades_ops",
+    "Mechanic": "trades_ops",
+    "Recording engineer": "media_creative",
+    "Sound editor": "media_creative",
+    "Medical": "healthcare",
+    "Physician": "healthcare",
+    "Pharmacist": "healthcare",
+    "Physical Therapist": "healthcare",
+    "Audiologist": "healthcare",
+    "Veterinarian": "healthcare",
+    "Para Medical (physiotherapy, occupational theropy, audio and speech language theropy, nursing)": "healthcare",
+    "Banking": "finance",
+    "Chartered Accountant": "finance",
+    "Chief financial officer": "finance",
+    "Financial Advisor": "finance",
+    "Internal auditor": "finance",
+    "Stock Broker": "finance",
+    "Actuary": "finance",
+    "Company secretary": "finance",
+    "Business Analyst": "business",
+    "Business manager": "business",
+    "Marketing": "business",
+    "Manager": "business",
+    "Sales Representative": "business",
+    "Consultant": "business",
+    "Logistics manager": "business",
+    "Leader": "business",
+    "Receptionist": "trades_ops",
+    "Language Teacher": "education",
+    "Primary Teacher": "education",
+    "Pre Primary Teacher (2020 NEP and Mental Health)": "education",
+    "Middle, Higher School Teacher and Professors": "education",
+    "Music teacher": "education",
+    "Graphic Designer": "media_creative",
+    "Fashion Designer": "media_creative",
+    "Interior Decorator": "media_creative",
+    "Broadcaster": "media_creative",
+    "Journalist": "media_creative",
+    "Editor": "media_creative",
+    "Artist": "arts_culture",
+    "Actor / Actress": "arts_culture",
+    "Dancer": "arts_culture",
+    "Poet": "arts_culture",
+    "Writer": "arts_culture",
+    "Philosopher": "arts_culture",
+    "Nature photographer": "media_creative",
+    "Research analyst": "science_research",
+    "Mathematician": "science_research",
+    "Physicist": "science_research",
+    "Astronomer": "science_research",
+    "Geologist": "science_research",
+    "Marine Biologist": "science_research",
+    "Anthropologist": "science_research",
+    "Archeologist": "science_research",
+    "Historian": "science_research",
+    "Economist": "finance",
+    "Psychologist": "healthcare",
+    "Counselor": "healthcare",
+    "Social Worker": "law_gov",
+    "Lawyer": "law_gov",
+    "Politician": "law_gov",
+    "Criminologist": "law_gov",
+    "Police Force (Spies, CBI officials, CID, Detectives)": "law_gov",
+    "Militry": "law_gov",
+    "Para Militry (https://en.wikipedia.org/wiki/Paramilitary_forces_of_India)": "law_gov",
+    "Pilot": "engineering",
+    "Athlete": "trades_ops",
+    "Librarian": "education"
+  }
+}

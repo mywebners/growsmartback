@@ -34,7 +34,7 @@ performance_cols = ["P1","P2","P3","P4","P5","P6","P7","P8"]
 for col in performance_cols:
     df[col] = df[col].map(mapping)
 
-print("Converted Performance Columns ✅")
+print("Converted Performance Columns OK")
 
 
 X = df.drop("Job profession", axis=1)
@@ -68,7 +68,7 @@ model = Pipeline(steps=[
 
 model.fit(X_train, y_train)
 
-print("Model Trained ✅")
+print("Model Trained OK")
 
 
 y_pred = model.predict(X_test)
@@ -81,4 +81,4 @@ print("Accuracy:", accuracy)
 joblib.dump(model, "model/model.pkl")
 joblib.dump(le, "model/encoder.pkl")
 
-print("Model Saved ✅")
+print("Model Saved OK")

@@ -129,9 +129,27 @@ _ALWAYS_EXCLUDE = (
     "school teacher",
 )
 
+# Manual / trade / physical jobs — clash with ICS / Computer academic tracks
+_TRADES_HANDS_ON = (
+    "mechanic",
+    "technician",
+    "athlete",
+    "dancer",
+    "militry",
+    "military",
+    "para militry",
+    "paramilitary",
+    "pilot",  # aviation physical track — not ICS software path
+    "nature photographer",
+)
+
 
 def _has_any(c: str, needles: Sequence[str]) -> bool:
     return any(n in c for n in needles)
+
+
+def _is_trade_or_hands_on(c: str) -> bool:
+    return _has_any(c, _TRADES_HANDS_ON)
 
 
 def _to_unit(value: float, low: float, high: float) -> float:
@@ -160,6 +178,7 @@ def stream_domain_multiplier(
     psy = _has_any(c, _PSY_SOCIAL)
     law_bus = _has_any(c, _LEGAL_BUSINESS)
     edu = _has_any(c, _EDU_LANG)
+    trade = _is_trade_or_hands_on(c)
 
     def apply_inter(stream: Optional[str]) -> float:
         if not stream:
@@ -168,20 +187,25 @@ def stream_domain_multiplier(
         mult = 1.0
 
         if s == "ics":
+            # ICS students should see computing careers — not mechanic/trades
+            if trade and not tech:
+                mult *= 0.08
             if tech:
-                mult *= 1.55
+                mult *= 1.7
             if eng and not tech:
-                mult *= 1.15
+                mult *= 1.1
             if med:
-                mult *= 0.35
+                mult *= 0.28
             if psy and not tech and not edu:
-                mult *= 0.3
+                mult *= 0.28
             if law_bus and not tech:
-                mult *= 0.55
+                mult *= 0.5
 
         elif s == "pre-eng":
             if eng or tech:
                 mult *= 1.5
+            if trade and not eng and not tech:
+                mult *= 0.85
             if med or psy:
                 mult *= 0.45
 
@@ -190,6 +214,8 @@ def stream_domain_multiplier(
                 mult *= 1.55
             if tech and not med:
                 mult *= 0.65
+            if trade and not med:
+                mult *= 0.35
             if psy and "psychiatr" not in c and "psycholog" in c:
                 mult *= 0.75
 
@@ -200,6 +226,8 @@ def stream_domain_multiplier(
                 mult *= 0.5
             if med:
                 mult *= 0.4
+            if trade and not edu:
+                mult *= 0.55
 
         return mult
 
@@ -209,15 +237,19 @@ def stream_domain_multiplier(
         s = stream.strip().lower()
         mult = 1.0
         if s == "cs":
+            if trade and not tech:
+                mult *= 0.2
             if tech or eng:
-                mult *= 1.2
+                mult *= 1.25
             if med and not tech:
-                mult *= 0.75
+                mult *= 0.7
         elif s == "bio":
             if med:
                 mult *= 1.2
             if tech and not med:
                 mult *= 0.85
+            if trade and not med:
+                mult *= 0.55
         elif s == "arts":
             if psy or law_bus or edu:
                 mult *= 1.15
@@ -226,7 +258,7 @@ def stream_domain_multiplier(
         return mult
 
     m = apply_inter(intermediate_stream) * apply_matric(matric_stream)
-    return max(0.15, min(m, 2.8))
+    return max(0.05, min(m, 3.0))
 
 
 def skill_alignment_multiplier(
@@ -241,7 +273,8 @@ def skill_alignment_multiplier(
     naturalist: int,
 ) -> float:
     """
-    Light nudge so dominant intelligences favour plausible career families.
+    Nudge so dominant intelligences favour plausible career families,
+    and low bodily aptitude blocks hands-on trades like Mechanic.
     """
     c = _norm(career_name)
     if not c:
@@ -252,12 +285,21 @@ def skill_alignment_multiplier(
     Li, Ie = linguistic, interpersonal
     Ip = intrapersonal
 
-    if _has_any(c, _TECH + ("analyst", "program")):
+    if _has_any(c, _TECH + ("analyst", "program", "database")):
         top = (L + S) / 2
         if top >= 2:
-            mult *= 1.0 + 0.08 * (top - 1)
+            mult *= 1.0 + 0.12 * (top - 1)
         else:
             mult *= 0.88
+
+    if _is_trade_or_hands_on(c) and not _has_any(c, _TECH):
+        # Mechanic / technician need hands-on confidence
+        if bodily <= 1:
+            mult *= 0.25
+        elif bodily == 2:
+            mult *= 0.7
+        elif bodily >= 3:
+            mult *= 1.15
 
     if _has_any(c, _PSY_SOCIAL) and "psychiatr" not in c:
         if (Ie + Ip + Li) / 3 >= 2:
@@ -275,10 +317,10 @@ def skill_alignment_multiplier(
     if musical >= 3 and _has_any(c, ("music", "composer", "audio", "sound")):
         mult *= 1.12
 
-    if bodily >= 3 and _has_any(c, ("sport", "fitness", "physio", "athlete")):
+    if bodily >= 3 and _has_any(c, ("sport", "fitness", "physio", "athlete", "mechanic")):
         mult *= 1.1
 
-    return max(0.5, min(mult, 1.35))
+    return max(0.2, min(mult, 1.45))
 
 
 def blend_career_probabilities(
@@ -291,8 +333,8 @@ def blend_career_probabilities(
 ) -> List[Dict[str, Any]]:
     """
     Human-first weighted ranking:
-    final = 0.45 * brain_fit + 0.35 * academic_fit + 0.20 * model_fit
-    Returns ranked rows with explainable components.
+    final = 0.40 * brain_fit + 0.45 * academic_fit + 0.15 * model_fit
+    Academic/stream fit is weighted highest so ICS never ranks Mechanic over computing.
     """
     logical = int(skills.get("Logical", skills.get("Logical - Mathematical", 2)))
     spatial = int(skills.get("Spatial", skills.get("Spatial-Visualization", 2)))
@@ -306,10 +348,18 @@ def blend_career_probabilities(
     logical_spatial_avg = (logical + spatial) / 2.0
     communication_self_avg = (linguistic + interpersonal + intrapersonal) / 3.0
 
+    inter = (intermediate_stream or "").strip().lower()
+    matric = (matric_stream or "").strip().lower()
+    computing_track = inter == "ics" or matric == "cs"
+
     scored: List[Dict[str, Any]] = []
     for idx, label in zip(class_indices, career_labels):
         normalized_label = _norm(str(label))
         if _has_any(normalized_label, _ALWAYS_EXCLUDE):
+            continue
+
+        # Hard gate: CS/ICS students must not get pure trade careers in the ranking list
+        if computing_track and _is_trade_or_hands_on(normalized_label) and not _has_any(normalized_label, _TECH):
             continue
 
         base = float(probs[idx])
@@ -319,10 +369,11 @@ def blend_career_probabilities(
             intrapersonal, musical, bodily, naturalist,
         )
         model_fit = max(0.0, min(1.0, base))
-        academic_fit = _to_unit(sm, 0.15, 2.8)
-        brain_fit = _to_unit(km, 0.5, 1.35)
+        academic_fit = _to_unit(sm, 0.05, 3.0)
+        brain_fit = _to_unit(km, 0.2, 1.45)
 
-        final_score = (0.45 * brain_fit) + (0.35 * academic_fit) + (0.20 * model_fit)
+        # Stream/academics dominate so odd ML picks (e.g. Mechanic on ICS) cannot win
+        final_score = (0.40 * brain_fit) + (0.45 * academic_fit) + (0.15 * model_fit)
 
         why: List[str] = []
         if intermediate_stream:
@@ -330,12 +381,16 @@ def blend_career_probabilities(
         if matric_stream:
             why.append(f"Matric stream ({matric_stream}) background considered.")
 
+        if computing_track and _has_any(normalized_label, _TECH):
+            why.append("Your Computer / ICS academics strongly support computing and IT careers.")
         if logical_spatial_avg >= 2.5 and _has_any(normalized_label, _TECH + _ENGINEERING):
             why.append("Strong logical + spatial pattern supports technical/problem-solving roles.")
         if communication_self_avg >= 2.2 and _has_any(normalized_label, _EDU_LANG + _LEGAL_BUSINESS + _PSY_SOCIAL):
             why.append("Communication and self-awareness profile supports people/communication domains.")
         if naturalist >= 2 and _has_any(normalized_label, _MEDICAL + ("biology", "environment", "research")):
             why.append("Naturalist/observation tendency adds support for science-oriented directions.")
+        if bodily <= 1 and _is_trade_or_hands_on(normalized_label):
+            why.append("Hands-on aptitude answers were low, so trade/physical careers were ranked down.")
         if not why:
             why.append("This career best matches your combined marks, stream, and brain-skill profile.")
 
