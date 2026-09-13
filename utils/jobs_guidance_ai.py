@@ -8,23 +8,42 @@ from urllib.error import URLError, HTTPError
 
 
 def build_jobs_user_payload(data):
+    field = (data.get("field_or_program") or "").strip()
+    level = str(data.get("education_level") or "").strip().lower()
+
+    # Prefer explicit field/program; fall back to older stream/degree fields
+    if not field:
+        if level == "matric":
+            field = (data.get("matric_stream") or "").strip()
+        elif level == "inter":
+            field = (data.get("intermediate_stream") or "").strip()
+        elif level == "bachelor":
+            field = (data.get("bachelor_degree") or "").strip()
+
     return {
         "education_level": data.get("education_level"),
+        "field_or_program": field,
         "matric_stream": data.get("matric_stream"),
-        "matric_marks": data.get("matric_marks") or {},
         "intermediate_stream": data.get("intermediate_stream"),
-        "intermediate_marks": data.get("intermediate_marks") or {},
         "bachelor_degree": data.get("bachelor_degree") or "",
+        # Matric / Inter: field only. Bachelor: CGPA / percentage / transcript allowed.
+        "matric_marks": {},
+        "intermediate_marks": {},
         "bachelor_cgpa": data.get("bachelor_cgpa"),
+        "bachelor_percentage": data.get("bachelor_percentage"),
         "has_transcript_image": bool(data.get("transcript_image")),
     }
 
 
 SYSTEM_SCRIPT = (
     "You are GrowSmart Jobs Advisor for Pakistan.\n"
-    "Your job: look at the candidate's education (Matric / Intermediate / Bachelor marks, "
-    "streams, CGPA, and optional transcript image) and recommend REALISTIC jobs they can "
-    "apply for RIGHT NOW in Pakistan.\n\n"
+    "Your job: look at the candidate's education LEVEL and FIELD/PROGRAM and recommend "
+    "REALISTIC jobs they can apply for RIGHT NOW in Pakistan.\n\n"
+    "Input rules:\n"
+    "- Matric / Intermediate: use level + field/program only (no marks required).\n"
+    "- Bachelor: also use bachelor_cgpa and/or bachelor_percentage when provided, "
+    "and if a transcript image is attached, extract degree name, CGPA/percentage, "
+    "and key subjects to improve matching.\n\n"
     "Cover BOTH:\n"
     "1) Government / public: FPSC, PPSC, SPSC, KPPSC, BPSC, NTS, CTS, OTS, Pakistan Army/Navy/Air "
     "Force civilian or cadet tracks where eligible, State Bank / SECP / provincial departments.\n"
@@ -33,6 +52,7 @@ SYSTEM_SCRIPT = (
     "Rules:\n"
     "- Only suggest roles matching their CURRENT qualification level (do not require a degree "
     "they do not have).\n"
+    "- Match suggestions to their field/program (e.g. Pre-Engineering, ICS, BS CS, BBA).\n"
     "- Prefer Pakistan-local opportunities.\n"
     "- For every job include 2–4 DIRECT apply/search links (https URLs) the user can open.\n"
     "- Prefer searchable URLs like:\n"
@@ -43,8 +63,7 @@ SYSTEM_SCRIPT = (
     "  https://www.fpsc.gov.pk/\n"
     "  https://www.ppsc.gop.pk/\n"
     "  https://www.nts.org.pk/\n"
-    "- If transcript image is provided, extract degree name, CGPA/percentage, and key subjects.\n"
-    "- Be honest: if marks are weak, suggest entry-level / internship / skills-based roles too.\n"
+    "- Be honest: if CGPA/percentage is weak, suggest entry-level / internship / skills-based roles too.\n"
     "- Return STRICT JSON only (no markdown) with this shape:\n"
     "{\n"
     '  "summary": string,\n'
@@ -89,11 +108,15 @@ def call_jobs_openai(data, openai_api_key, openai_model="gpt-4o-mini"):
         return False, {"message": "education_level must be matric, inter, or bachelor"}
 
     profile = build_jobs_user_payload(data)
-    transcript = data.get("transcript_image")
+    if not profile.get("field_or_program"):
+        return False, {"message": "Please provide your field or program qualification."}
 
+    transcript = data.get("transcript_image")
     user_text = (
-        "Candidate academic profile (JSON):\n"
+        "Candidate qualification (JSON):\n"
         f"{json.dumps(profile, ensure_ascii=False, indent=2)}\n\n"
+        "For Matric/Intermediate use level + field/program only.\n"
+        "For Bachelor also use CGPA/percentage and transcript image when provided.\n"
         "Recommend Pakistan jobs + direct apply links for this profile."
     )
 

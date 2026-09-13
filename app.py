@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 
 from utils.career_scoring import marks_to_pslots_sorted, blend_career_probabilities
 from utils.jobs_guidance_ai import call_jobs_openai
+from utils.cv_maker_ai import call_cv_openai
 
 load_dotenv()
 
@@ -661,7 +662,23 @@ def jobs_guidance():
     if ok:
         return jsonify(payload)
     msg = str(payload.get("message", "")).lower()
-    status = 400 if "education_level" in msg else (503 if "missing" in msg else 502)
+    status = 400 if "education_level" in msg or "field or program" in msg else (503 if "missing" in msg else 502)
+    return jsonify(payload), status
+
+
+@app.route("/cv-maker", methods=["POST"])
+def cv_maker():
+    data = request.json or {}
+    ok, payload = call_cv_openai(data, OPENAI_API_KEY, OPENAI_MODEL)
+    if ok:
+        return jsonify(payload)
+    msg = str(payload.get("message", "")).lower()
+    if "missing" in msg and "openai" in msg:
+        status = 503
+    elif "required" in msg:
+        status = 400
+    else:
+        status = 502
     return jsonify(payload), status
 
 
