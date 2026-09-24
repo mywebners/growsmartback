@@ -4,11 +4,13 @@ import joblib
 import numpy as np
 from pymongo import MongoClient
 from pymongo.errors import PyMongoError
-import bcrypt
+from bson import ObjectId
+from bson.errors import InvalidId
 import jwt
 import datetime
 import os
 import json
+import uuid
 from urllib import request as urlrequest
 from urllib.error import URLError, HTTPError
 from dotenv import load_dotenv
@@ -34,9 +36,83 @@ career_scope_col = db["career_scope"]
 SECRET_KEY = os.getenv("SECRET_KEY", "anas_secret_123")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+# Resend (forgot-password emails). Local test: no custom domain needed — use beth.t@example.com
+RESEND_API_KEY = os.getenv("RESEND_API_KEY") or os.getenv("resend_api_key") or ""
+# Without a verified domain, From MUST be Resend's onboarding address (not Gmail).
+RESEND_FROM_EMAIL = os.getenv(
+    "RESEND_FROM_EMAIL",
+    "GrowSmart <onboarding@resend.dev>",
+)
+# Your Gmail — used as Reply-To so users can reply to you
+RESEND_REPLY_TO = os.getenv("RESEND_REPLY_TO", "anas.dev200@gmail.com")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATASET_DIR = os.path.join(BASE_DIR, "dataset")
+
+# Kaggle career_data.xlsx skill columns are scored ~0–20 (not 1–3).
+KAGGLE_SKILL_COLUMNS = [
+    "Linguistic",
+    "Musical",
+    "Bodily",
+    "Logical - Mathematical",
+    "Spatial-Visualization",
+    "Interpersonal",
+    "Intrapersonal",
+    "Naturalist",
+]
+
+
+def _skill_to_kaggle_scale(value):
+    """Map UI / legacy values onto the Kaggle dataset 0–20 skill scale."""
+    if isinstance(value, (int, float)):
+        v = float(value)
+        if 1 <= v <= 5:
+            return int(round(4 * v))  # Likert 1–5 → 4,8,12,16,20
+        if 0 <= v <= 20:
+            return int(round(v))
+        if 1 <= v <= 3:
+            return {1: 7, 2: 12, 3: 17}[int(v)]
+        return None
+    if isinstance(value, str):
+        return {"LOW": 7, "MEDIUM": 12, "HIGH": 17}.get(value.strip().upper())
+    return None
+
+
+def _kaggle_to_ternary(value):
+    """Compress 0–20 skill into 1/2/3 for stream/skill blend heuristics."""
+    v = int(value or 0)
+    if v <= 8:
+        return 1
+    if v <= 14:
+        return 2
+    return 3
+
+
+def _current_user():
+    """Resolve logged-in user from Authorization: Bearer <jwt>."""
+    auth = request.headers.get("Authorization") or ""
+    if not auth.startswith("Bearer "):
+        return None
+    token = auth[7:].strip()
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+        uid = payload.get("user_id")
+        if not uid:
+            return None
+        return users.find_one({"_id": ObjectId(uid)})
+    except (jwt.PyJWTError, InvalidId, PyMongoError, TypeError):
+        return None
+
+
+def _public_guidance_entry(entry):
+    if not isinstance(entry, dict):
+        return entry
+    out = dict(entry)
+    out.pop("_id", None)
+    return out
 
 
 def _load_json(path, fallback):
@@ -219,90 +295,161 @@ def career_scope():
     return jsonify({"success": True, **_resolve_scope_for_career(career)})
 
 
-@app.route("/auth/register", methods=["POST"])
-def register():
-    data = request.json or {}
-
-    required_fields = ["name", "email", "password"]
-    if not all(field in data and data[field] for field in required_fields):
-        return jsonify({"message": "Missing required fields"}), 400
-
-    try:
-        if users.find_one({"email": data["email"]}):
-            return jsonify({"message": "User already exists"}), 400
-    except PyMongoError:
-        return jsonify({"message": "Database connection failed. Check MONGO_URI."}), 500
-
-    hashed_pw = bcrypt.hashpw(data["password"].encode("utf-8"), bcrypt.gensalt())
-
-    try:
-        users.insert_one({
-            "name": data["name"],
-            "email": data["email"],
-            "password": hashed_pw
-        })
-    except PyMongoError:
-        return jsonify({"message": "Database connection failed. Check MONGO_URI."}), 500
-
-    return jsonify({"message": "User registered successfully"}), 201
-
-
-@app.route("/auth/login", methods=["POST"])
-def login():
-    data = request.json or {}
-
-    required_fields = ["email", "password"]
-    if not all(field in data and data[field] for field in required_fields):
-        return jsonify({"message": "Missing required fields"}), 400
-
-    try:
-        user = users.find_one({"email": data["email"]})
-    except PyMongoError:
-        return jsonify({"message": "Database connection failed. Check MONGO_URI."}), 500
-    if not user:
-        return jsonify({"message": "User not found"}), 404
-
-    stored_password = user.get("password")
-    if isinstance(stored_password, str):
-        stored_password = stored_password.encode("utf-8")
-
-    if not stored_password or not bcrypt.checkpw(data["password"].encode("utf-8"), stored_password):
-        return jsonify({"message": "Wrong password"}), 400
-
-    token = jwt.encode(
-        {
-            "user_id": str(user["_id"]),
-            "exp": datetime.datetime.utcnow() + datetime.timedelta(days=5),
-        },
+# Auth routes live in routes/auth.py (register / login / forgot + reset via Resend)
+from routes.auth import create_auth_blueprint
+app.register_blueprint(
+    create_auth_blueprint(
+        users,
         SECRET_KEY,
-        algorithm="HS256",
+        resend_api_key=RESEND_API_KEY,
+        resend_from_email=RESEND_FROM_EMAIL,
+        resend_reply_to=RESEND_REPLY_TO,
+        frontend_url=FRONTEND_URL,
     )
-
-    return jsonify({
-        "token": token,
-        "name": user["name"]
-    })
+)
 
 
-@app.route("/auth/forgot-password", methods=["POST"])
-def forgot_password():
-    data = request.json or {}
+def _save_guidance_for_user(user, entry):
+    """Push one guidance entry into users.guidance (max 100)."""
+    try:
+        users.update_one(
+            {"_id": user["_id"]},
+            {
+                "$push": {
+                    "guidance": {
+                        "$each": [entry],
+                        "$position": 0,
+                        "$slice": 100,
+                    }
+                }
+            },
+        )
+        return True
+    except PyMongoError:
+        return False
 
-    if "email" not in data or not data["email"]:
-        return jsonify({"message": "Email is required"}), 400
 
-    user = users.find_one({"email": data["email"]})
+def _build_career_guidance_entry(data, predicted_career, top_results, used_sorted_slots):
+    return {
+        "id": str(uuid.uuid4()),
+        "type": "career",
+        "createdAt": datetime.datetime.utcnow().isoformat() + "Z",
+        "title": str(predicted_career),
+        "career": str(predicted_career),
+        "topCareers": top_results,
+        "fullData": {
+            "matric_marks": data.get("matric_marks") or data.get("matricMarks") or {},
+            "intermediate_marks": data.get("intermediate_marks") or data.get("intermediateMarks") or {},
+            "matric_stream": data.get("matric_stream") or data.get("matricStream"),
+            "intermediate_stream": data.get("intermediate_stream") or data.get("intermediateStream"),
+            "Linguistic": data.get("Linguistic"),
+            "Musical": data.get("Musical"),
+            "Bodily": data.get("Bodily"),
+            "Logical": data.get("Logical") or data.get("Logical - Mathematical"),
+            "Spatial": data.get("Spatial") or data.get("Spatial-Visualization"),
+            "Interpersonal": data.get("Interpersonal"),
+            "Intrapersonal": data.get("Intrapersonal"),
+            "Naturalist": data.get("Naturalist"),
+            "used_sorted_pslots": used_sorted_slots,
+        },
+        "skillsRaw": data.get("skillsRaw") or data.get("skills_raw") or {},
+        "skillsQuestionMap": data.get("skillsQuestionMap") or {},
+        "skillsConverted": {
+            "Linguistic": data.get("Linguistic"),
+            "Musical": data.get("Musical"),
+            "Bodily": data.get("Bodily"),
+            "Logical": data.get("Logical") or data.get("Logical - Mathematical"),
+            "Spatial": data.get("Spatial") or data.get("Spatial-Visualization"),
+            "Interpersonal": data.get("Interpersonal"),
+            "Intrapersonal": data.get("Intrapersonal"),
+            "Naturalist": data.get("Naturalist"),
+        },
+        "matric": {
+            "stream": data.get("matric_stream") or data.get("matricStream"),
+            "marks": data.get("matric_marks") or data.get("matricMarks") or {},
+        },
+        "intermediate": {
+            "stream": data.get("intermediate_stream") or data.get("intermediateStream"),
+            "marks": data.get("intermediate_marks") or data.get("intermediateMarks") or {},
+        },
+        "studyResult": None,
+        "jobsResult": None,
+        "cvResult": None,
+        "payload": {},
+    }
+
+
+@app.route("/user/guidance", methods=["GET", "POST"])
+def user_guidance():
+    """Save/load guidance results inside the logged-in MongoDB user document."""
+    user = _current_user()
     if not user:
-        return jsonify({"message": "User not found"}), 404
+        return jsonify({"message": "Login required"}), 401
 
-    new_password = bcrypt.hashpw("123456".encode("utf-8"), bcrypt.gensalt())
+    if request.method == "GET":
+        guidance = user.get("guidance") or []
+        if not isinstance(guidance, list):
+            guidance = []
+        guidance = [_public_guidance_entry(g) for g in guidance]
+        guidance.sort(key=lambda g: g.get("createdAt") or "", reverse=True)
+        return jsonify({"success": True, "guidance": guidance})
 
-    users.update_one(
-        {"email": data["email"]},
-        {"$set": {"password": new_password}}
-    )
+    body = request.json or {}
+    guidance_type = str(body.get("type") or "career").strip().lower()
+    if guidance_type not in ("career", "study", "jobs", "cv", "insights", "scope"):
+        return jsonify({"message": "type must be career, study, jobs, cv, insights, or scope"}), 400
 
-    return jsonify({"message": "Password reset to 123456"})
+    entry = {
+        "id": str(uuid.uuid4()),
+        "type": guidance_type,
+        "createdAt": datetime.datetime.utcnow().isoformat() + "Z",
+        "title": str(body.get("title") or body.get("career") or guidance_type).strip(),
+        "career": body.get("career"),
+        "topCareers": body.get("topCareers") or body.get("top_careers") or [],
+        "fullData": body.get("fullData") or body.get("full_data") or {},
+        "skillsRaw": body.get("skillsRaw") or body.get("skills_raw") or {},
+        "skillsQuestionMap": body.get("skillsQuestionMap") or {},
+        "skillsConverted": body.get("skillsConverted") or {},
+        "matric": body.get("matric") or {},
+        "intermediate": body.get("intermediate") or {},
+        "studyResult": body.get("studyResult") or body.get("study_result"),
+        "jobsResult": body.get("jobsResult") or body.get("jobs_result"),
+        "cvResult": body.get("cvResult") or body.get("cv_result"),
+        "payload": body.get("payload") or {},
+    }
+
+    if not _save_guidance_for_user(user, entry):
+        return jsonify({"message": "Database connection failed"}), 500
+
+    return jsonify({"success": True, "entry": entry}), 201
+
+
+@app.route("/user/guidance/<entry_id>", methods=["GET", "DELETE"])
+def user_guidance_item(entry_id):
+    user = _current_user()
+    if not user:
+        return jsonify({"message": "Login required"}), 401
+
+    guidance = user.get("guidance") or []
+    if not isinstance(guidance, list):
+        guidance = []
+
+    match = next((g for g in guidance if str(g.get("id")) == str(entry_id)), None)
+    if not match:
+        return jsonify({"message": "Guidance entry not found"}), 404
+
+    if request.method == "GET":
+        return jsonify({"success": True, "entry": _public_guidance_entry(match)})
+
+    try:
+        users.update_one(
+            {"_id": user["_id"]},
+            {"$pull": {"guidance": {"id": entry_id}}},
+        )
+    except PyMongoError:
+        return jsonify({"message": "Database connection failed"}), 500
+
+    return jsonify({"success": True, "message": "Deleted"})
 
 
 @app.route("/predict-career", methods=["POST"])
@@ -315,29 +462,12 @@ def predict_career():
     data = request.json or {}
 
     performance_map = {"POOR": 0, "AVG": 1, "BEST": 2}
-    skill_map = {"LOW": 1, "MEDIUM": 2, "HIGH": 3}
 
     def normalize_level(value, mapping):
         if isinstance(value, (int, float)):
             return int(value)
         if isinstance(value, str):
             return mapping.get(value.strip().upper())
-        return None
-
-    def normalize_skill_input(value):
-        """Map UI 1–5 or LOW/MEDIUM/HIGH to model scale 1–3 (same as frontend convertSkill)."""
-        if isinstance(value, (int, float)):
-            v = int(round(float(value)))
-            if 1 <= v <= 5:
-                if v <= 2:
-                    return 1
-                if v == 3:
-                    return 2
-                return 3
-            if 1 <= v <= 3:
-                return v
-        if isinstance(value, str):
-            return skill_map.get(value.strip().upper())
         return None
 
     def pick_skill_value(payload, keys):
@@ -372,18 +502,19 @@ def predict_career():
             P7 = normalize_level(data["P7"], performance_map)
             P8 = normalize_level(data["P8"], performance_map)
 
-        Linguistic = normalize_skill_input(data["Linguistic"])
-        Musical = normalize_skill_input(data["Musical"])
-        Bodily = normalize_skill_input(data["Bodily"])
-        Logical = normalize_skill_input(
+        # Skills must match Kaggle career_data.xlsx columns (≈0–20), not 1–3.
+        Linguistic = _skill_to_kaggle_scale(data["Linguistic"])
+        Musical = _skill_to_kaggle_scale(data["Musical"])
+        Bodily = _skill_to_kaggle_scale(data["Bodily"])
+        Logical = _skill_to_kaggle_scale(
             pick_skill_value(data, ["Logical", "Logical - Mathematical"])
         )
-        Spatial = normalize_skill_input(
+        Spatial = _skill_to_kaggle_scale(
             pick_skill_value(data, ["Spatial", "Spatial-Visualization"])
         )
-        Interpersonal = normalize_skill_input(data["Interpersonal"])
-        Intrapersonal = normalize_skill_input(data["Intrapersonal"])
-        Naturalist = normalize_skill_input(data["Naturalist"])
+        Interpersonal = _skill_to_kaggle_scale(data["Interpersonal"])
+        Intrapersonal = _skill_to_kaggle_scale(data["Intrapersonal"])
+        Naturalist = _skill_to_kaggle_scale(data["Naturalist"])
     except KeyError as e:
         return jsonify({"message": f"Invalid or missing field: {str(e)}"}), 400
     except TypeError as e:
@@ -403,7 +534,9 @@ def predict_career():
             return jsonify({"message": "Could not derive P-slots from marks"}), 400
         return jsonify({"message": "Invalid P-slot levels. Use POOR/AVG/BEST or 0/1/2"}), 400
     if any(v is None for v in [Linguistic, Musical, Bodily, Logical, Spatial, Interpersonal, Intrapersonal, Naturalist]):
-        return jsonify({"message": "Invalid skill levels. Use LOW/MEDIUM/HIGH or numeric scale"}), 400
+        return jsonify({
+            "message": "Invalid skill levels. Use 1–5 Likert, 0–20 Kaggle scale, or LOW/MEDIUM/HIGH"
+        }), 400
 
     if MODEL_FEATURE_ORDER:
         try:
@@ -425,6 +558,7 @@ def predict_career():
         class_indices = list(range(len(probs)))
         class_labels = [str(c) for c in classes]
 
+        # Blend heuristics still use ternary buckets; model itself gets 0–20.
         adjusted = blend_career_probabilities(
             probs=probs,
             class_indices=class_indices,
@@ -432,14 +566,14 @@ def predict_career():
             matric_stream=matric_stream,
             intermediate_stream=intermediate_stream,
             skills={
-                "Linguistic": Linguistic,
-                "Musical": Musical,
-                "Bodily": Bodily,
-                "Logical": Logical,
-                "Spatial": Spatial,
-                "Interpersonal": Interpersonal,
-                "Intrapersonal": Intrapersonal,
-                "Naturalist": Naturalist,
+                "Linguistic": _kaggle_to_ternary(Linguistic),
+                "Musical": _kaggle_to_ternary(Musical),
+                "Bodily": _kaggle_to_ternary(Bodily),
+                "Logical": _kaggle_to_ternary(Logical),
+                "Spatial": _kaggle_to_ternary(Spatial),
+                "Interpersonal": _kaggle_to_ternary(Interpersonal),
+                "Intrapersonal": _kaggle_to_ternary(Intrapersonal),
+                "Naturalist": _kaggle_to_ternary(Naturalist),
             }
         )
         if not adjusted:
@@ -467,18 +601,45 @@ def predict_career():
             })
 
         best = int(top_idx[0])
-        return jsonify({
+        response_payload = {
             "predicted_career": str(classes[best]),
             "top_careers": top_results,
             "used_sorted_pslots": use_sorted_slots,
-        })
+            "skill_scale": "kaggle_0_20",
+            "kaggle_skill_columns": KAGGLE_SKILL_COLUMNS,
+            "saved_to_account": False,
+            "saved_guidance_id": None,
+        }
+
+        # If logged in, also store this prediction under users.guidance
+        user = _current_user()
+        if user:
+            entry = _build_career_guidance_entry(
+                data, response_payload["predicted_career"], top_results, use_sorted_slots
+            )
+            if _save_guidance_for_user(user, entry):
+                response_payload["saved_to_account"] = True
+                response_payload["saved_guidance_id"] = entry["id"]
+
+        return jsonify(response_payload)
 
     prediction = model.predict(input_data)
     career_name = encoder.inverse_transform(prediction)
-    return jsonify({
-        "predicted_career": career_name[0],
-        "top_careers": [{"career": career_name[0], "confidence": None}]
-    })
+    predicted = career_name[0]
+    top_results = [{"career": predicted, "confidence": None}]
+    response_payload = {
+        "predicted_career": predicted,
+        "top_careers": top_results,
+        "saved_to_account": False,
+        "saved_guidance_id": None,
+    }
+    user = _current_user()
+    if user:
+        entry = _build_career_guidance_entry(data, predicted, top_results, use_sorted_slots)
+        if _save_guidance_for_user(user, entry):
+            response_payload["saved_to_account"] = True
+            response_payload["saved_guidance_id"] = entry["id"]
+    return jsonify(response_payload)
 
 
 def _merge_job_proficiency(degrees, raw_rows, legacy_related_fields):
