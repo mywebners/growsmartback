@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 from utils.career_scoring import marks_to_pslots_sorted, blend_career_probabilities
 from utils.jobs_guidance_ai import call_jobs_openai
 from utils.cv_maker_ai import call_cv_openai
+from utils.openai_errors import friendly_openai_error
 
 load_dotenv()
 
@@ -760,35 +761,44 @@ def career_insights():
     if not OPENAI_API_KEY:
         return jsonify({"message": "OPENAI_API_KEY is missing in .env (Cursor/backend env)"}), 503
 
-    prompt = (
-        "You are a Pakistan higher-education and labour-market advisor.\n"
-        f'Career title: "{career}"\n'
-        "Return strict JSON only (no markdown) with keys exactly:\n"
-        "{\n"
-        '  "career": string,\n'
-        '  "degrees": string[],\n'
-        '  "universities": [{"name": string, "url": string, "programs": string[], "note": string}],\n'
-        '  "job_proficiency": [{"degree": string, "percentage": number}],\n'
-        '  "institutes": string[]\n'
-        "}\n"
+    system_prompt = (
+        "You are GrowSmart Career Insights Advisor for Pakistan students.\n"
+        "For one career title, give clear study pathways in Pakistan.\n\n"
         "Rules:\n"
-        "- degrees: 6 to 8 items — concrete Pakistan-style qualifications "
-        "(e.g. BS CS, BS SE, BS IT, ADP Computing) relevant to this career.\n"
-        "- universities: exactly 8 to 10 distinct Pakistan universities. "
-        "Each must include: official website url (https://...), 1–3 program names "
-        "this university actually offers that lead toward this career, and a short note.\n"
-        "Use real official portals when known (nust.edu.pk, lums.edu.pk, nu.edu.pk, "
-        "comsats.edu.pk, uet.edu.pk, neduet.edu.pk, iba.edu.pk, pu.edu.pk, etc.).\n"
-        "- job_proficiency: same length/order as degrees; Pakistan job-market alignment 1–100.\n"
-        "- institutes: 4 to 6 vocational / skills bodies (NAVTTC, TEVTA, etc.).\n"
-        "- Only Pakistan institutions. No invented fake .edu domains if unsure — "
-        "use the best-known official homepage.\n"
+        "1) Suggest real Pakistan degrees that match the career.\n"
+        "2) Suggest real Pakistan universities with real https websites.\n"
+        "3) Prefer known universities like NUST, LUMS, FAST-NUCES, COMSATS, UET, NED, IBA, PU, KU.\n"
+        "4) job_proficiency must follow the same order as degrees (1-100 integers).\n"
+        "5) Notes must be one short clear sentence in simple English.\n"
+        "6) Do not invent fake university websites.\n"
+        "7) Return ONLY valid JSON (no markdown):\n"
+        "{\n"
+        '  "career": "",\n'
+        '  "degrees": [""],\n'
+        '  "universities": [{"name": "", "url": "https://...", "programs": [""], "note": ""}],\n'
+        '  "job_proficiency": [{"degree": "", "percentage": 0}],\n'
+        '  "institutes": [""]\n'
+        "}\n"
+        "Counts: degrees 6-8, universities 8-10, institutes 4-6."
+    )
+    user_prompt = (
+        f'Career title: "{career}"\n\n'
+        "Task:\n"
+        "1) List 6-8 useful Pakistan degree options for this career.\n"
+        "2) List 8-10 real universities with url, programs, and a short note.\n"
+        "3) Give job_proficiency % for each degree in the same order.\n"
+        "4) List 4-6 skills institutes (like NAVTTC, TEVTA).\n"
+        "5) Keep all text simple and clear.\n"
+        "Return JSON only."
     )
 
     req_body = {
         "model": OPENAI_MODEL,
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.3,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0.2,
         "response_format": {"type": "json_object"},
     }
 
@@ -807,7 +817,10 @@ def career_insights():
             data_obj = json.loads(raw)
             content = data_obj["choices"][0]["message"]["content"]
             parsed = json.loads(content)
-    except (HTTPError, URLError, KeyError, ValueError, TimeoutError) as e:
+    except HTTPError as e:
+        detail = e.read().decode("utf-8", errors="ignore") if hasattr(e, "read") else str(e)
+        return jsonify({"message": friendly_openai_error(detail, e.code)}), 502
+    except (URLError, KeyError, ValueError, TimeoutError) as e:
         return jsonify({"message": f"OpenAI request failed: {str(e)}"}), 502
 
     finalized = _finalize_insights_payload(parsed, career)

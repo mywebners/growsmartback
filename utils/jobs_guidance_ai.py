@@ -6,6 +6,8 @@ import json
 from urllib import request as urlrequest
 from urllib.error import URLError, HTTPError
 
+from utils.openai_errors import friendly_openai_error
+
 
 def build_jobs_user_payload(data):
     field = (data.get("field_or_program") or "").strip()
@@ -37,48 +39,33 @@ def build_jobs_user_payload(data):
 
 SYSTEM_SCRIPT = (
     "You are GrowSmart Jobs Advisor for Pakistan.\n"
-    "Your job: look at the candidate's education LEVEL and FIELD/PROGRAM and recommend "
-    "REALISTIC jobs they can apply for RIGHT NOW in Pakistan.\n\n"
-    "Input rules:\n"
-    "- Matric / Intermediate: use level + field/program only (no marks required).\n"
-    "- Bachelor: also use bachelor_cgpa and/or bachelor_percentage when provided, "
-    "and if a transcript image is attached, extract degree name, CGPA/percentage, "
-    "and key subjects to improve matching.\n\n"
-    "Cover BOTH:\n"
-    "1) Government / public: FPSC, PPSC, SPSC, KPPSC, BPSC, NTS, CTS, OTS, Pakistan Army/Navy/Air "
-    "Force civilian or cadet tracks where eligible, State Bank / SECP / provincial departments.\n"
-    "2) Private: Rozee.pk, Mustakbil, LinkedIn Jobs Pakistan, Indeed Pakistan, Bayt, BrightSpyre, "
-    "company career pages when relevant.\n\n"
+    "Recommend realistic jobs this student can apply for NOW.\n\n"
     "Rules:\n"
-    "- Only suggest roles matching their CURRENT qualification level (do not require a degree "
-    "they do not have).\n"
-    "- Match suggestions to their field/program (e.g. Pre-Engineering, ICS, BS CS, BBA).\n"
-    "- Prefer Pakistan-local opportunities.\n"
-    "- For every job include 2–4 DIRECT apply/search links (https URLs) the user can open.\n"
-    "- Prefer searchable URLs like:\n"
-    "  https://www.rozee.pk/\n"
-    "  https://www.mustakbil.com/\n"
-    "  https://www.linkedin.com/jobs/search/?keywords=JOBTITLE&location=Pakistan\n"
-    "  https://pk.indeed.com/jobs?q=JOBTITLE&l=Pakistan\n"
-    "  https://www.fpsc.gov.pk/\n"
-    "  https://www.ppsc.gop.pk/\n"
-    "  https://www.nts.org.pk/\n"
-    "- Be honest: if CGPA/percentage is weak, suggest entry-level / internship / skills-based roles too.\n"
-    "- Return STRICT JSON only (no markdown) with this shape:\n"
+    "1) Match education level strictly:\n"
+    "   - matric = helper / clerk / trainee / entry roles only\n"
+    "   - inter = internship / junior / trainee roles (no full bachelor jobs)\n"
+    "   - bachelor = junior / associate jobs in their field\n"
+    "2) Match the field/program closely (e.g. ICS → IT support; Pre-Med → lab/health support).\n"
+    "3) Include both Government and Private options.\n"
+    "4) Each job needs 2–4 real https apply/search links "
+    "(Rozee, Mustakbil, LinkedIn Pakistan, Indeed Pakistan, FPSC, PPSC, NTS).\n"
+    "5) Write summary and why in simple clear English (short sentences).\n"
+    "6) If CGPA/percentage is low, suggest trainee/internship roles and say so politely.\n"
+    "7) Return ONLY valid JSON (no markdown):\n"
     "{\n"
-    '  "summary": string,\n'
+    '  "summary": "2-3 short sentences",\n'
     '  "jobs": [\n'
     "    {\n"
-    '      "title": string,\n'
+    '      "title": "job title",\n'
     '      "sector": "Government" | "Private" | "Government / Private",\n'
     '      "fit": "Strong" | "Good" | "Possible",\n'
-    '      "why": string,\n'
-    '      "apply_links": [{"portal": string, "url": string}]\n'
+    '      "why": "1 short clear sentence",\n'
+    '      "apply_links": [{"portal": "name", "url": "https://..."}]\n'
     "    }\n"
     "  ],\n"
-    '  "portals": [{"name": string, "url": string}]\n'
+    '  "portals": [{"name": "portal", "url": "https://..."}]\n'
     "}\n"
-    "- jobs: 6 to 10 items. portals: 6 to 10 useful Pakistan job portals.\n"
+    "Give 7-10 jobs and 7-10 portals."
 )
 
 
@@ -112,12 +99,22 @@ def call_jobs_openai(data, openai_api_key, openai_model="gpt-4o-mini"):
         return False, {"message": "Please provide your field or program qualification."}
 
     transcript = data.get("transcript_image")
+    cgpa = profile.get("bachelor_cgpa")
+    pct = profile.get("bachelor_percentage")
     user_text = (
-        "Candidate qualification (JSON):\n"
-        f"{json.dumps(profile, ensure_ascii=False, indent=2)}\n\n"
-        "For Matric/Intermediate use level + field/program only.\n"
-        "For Bachelor also use CGPA/percentage and transcript image when provided.\n"
-        "Recommend Pakistan jobs + direct apply links for this profile."
+        "Student details for job advice:\n"
+        f"- Education level: {level}\n"
+        f"- Field / program: {profile.get('field_or_program')}\n"
+        f"- Bachelor CGPA: {cgpa if cgpa not in (None, '') else 'not given'}\n"
+        f"- Bachelor percentage: {pct if pct not in (None, '') else 'not given'}\n"
+        f"- Transcript image attached: {'yes' if isinstance(transcript, str) and transcript.startswith('data:image') else 'no'}\n\n"
+        "Task:\n"
+        "1) Suggest 7-10 realistic Pakistan jobs for THIS student.\n"
+        "2) Keep titles suitable for their education level.\n"
+        "3) For each job give a short clear why + 2-4 working https links.\n"
+        "4) Also list useful Pakistan job portals.\n"
+        "5) Write all text in simple clear English.\n"
+        "Return JSON only."
     )
 
     content_parts = [{"type": "text", "text": user_text}]
@@ -133,7 +130,7 @@ def call_jobs_openai(data, openai_api_key, openai_model="gpt-4o-mini"):
             {"role": "system", "content": SYSTEM_SCRIPT},
             {"role": "user", "content": content_parts},
         ],
-        "temperature": 0.35,
+        "temperature": 0.25,
         "response_format": {"type": "json_object"},
     }
 
@@ -154,7 +151,7 @@ def call_jobs_openai(data, openai_api_key, openai_model="gpt-4o-mini"):
             parsed = json.loads(content)
     except HTTPError as e:
         detail = e.read().decode("utf-8", errors="ignore") if hasattr(e, "read") else str(e)
-        return False, {"message": f"OpenAI HTTP error: {detail[:400]}"}
+        return False, {"message": friendly_openai_error(detail, e.code)}
     except (URLError, KeyError, ValueError, TimeoutError) as e:
         return False, {"message": f"OpenAI request failed: {str(e)}"}
 

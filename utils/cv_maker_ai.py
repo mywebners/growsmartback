@@ -5,41 +5,38 @@ import json
 from urllib import request as urlrequest
 from urllib.error import URLError, HTTPError
 
+from utils.openai_errors import friendly_openai_error
+
 
 SYSTEM_SCRIPT = (
-    "You are GrowSmart CV Writer specializing in UNITED STATES resumes/CVs.\n"
-    "Create a polished, ATS-friendly, US-style resume from the candidate JSON profile.\n\n"
-    "US resume rules:\n"
-    "- Use American English spelling and professional tone.\n"
-    "- Prefer reverse-chronological format.\n"
-    "- Write a strong Professional Summary (3–4 lines) tailored to target_role.\n"
-    "- Convert education/experience into clear US-style bullets (action verbs + impact).\n"
-    "- If location is outside the US, keep it honest; still format like a US resume.\n"
-    "- Do NOT invent fake companies, degrees, or dates. You may polish wording only.\n"
-    "- If some sections are weak/empty, improve using only given facts and note gaps lightly.\n"
-    "- Keep it concise: ideally 1 page worth of content.\n\n"
-    "Return STRICT JSON only (no markdown) with this shape:\n"
+    "You are GrowSmart CV Writer for United States resumes.\n"
+    "Make a clean, ATS-friendly US resume from the student facts only.\n\n"
+    "Rules:\n"
+    "1) Do NOT invent jobs, degrees, dates, companies, or numbers.\n"
+    "2) You may improve grammar and wording only.\n"
+    "3) Use American English.\n"
+    "4) Write a clear Professional Summary (3-4 short lines) for the target role.\n"
+    "5) Experience bullets must start with action verbs and stay factual.\n"
+    "6) Keep the resume short (about one page).\n"
+    "7) plain_text must be ready to copy, with clear section titles.\n"
+    "8) Write all text in simple clear English.\n"
+    "9) Return ONLY valid JSON (no markdown):\n"
     "{\n"
     '  "header": {\n'
-    '    "full_name": string,\n'
-    '    "headline": string,\n'
-    '    "email": string,\n'
-    '    "phone": string,\n'
-    '    "location": string,\n'
-    '    "linkedin": string,\n'
-    '    "portfolio": string\n'
+    '    "full_name": "", "headline": "", "email": "", "phone": "",\n'
+    '    "location": "", "linkedin": "", "portfolio": ""\n'
     "  },\n"
-    '  "summary": string,\n'
-    '  "skills": [string],\n'
-    '  "experience": [{"title": string, "company": string, "location": string, "dates": string, "bullets": [string]}],\n'
-    '  "education": [{"degree": string, "school": string, "location": string, "dates": string, "details": string}],\n'
-    '  "projects": [{"name": string, "description": string, "tech": string}],\n'
-    '  "certifications": [string],\n'
-    '  "languages": [string],\n'
-    '  "achievements": [string],\n'
-    '  "plain_text": string\n'
+    '  "summary": "",\n'
+    '  "skills": [""],\n'
+    '  "experience": [{"title": "", "company": "", "location": "", "dates": "", "bullets": [""]}],\n'
+    '  "education": [{"degree": "", "school": "", "location": "", "dates": "", "details": ""}],\n'
+    '  "projects": [{"name": "", "description": "", "tech": ""}],\n'
+    '  "certifications": [""],\n'
+    '  "languages": [""],\n'
+    '  "achievements": [""],\n'
+    '  "plain_text": ""\n'
     "}\n"
-    "- plain_text must be a clean plain-text US resume ready to copy/download.\n"
+    "Leave unused lists empty."
 )
 
 
@@ -89,10 +86,31 @@ def call_cv_openai(data, openai_api_key, openai_model="gpt-4o-mini"):
         "achievements": str(data.get("achievements") or "").strip(),
     }
 
+    target = profile["target_role"] or "General professional role"
     user_text = (
-        "Build a US-BASED professional resume/CV from this candidate profile JSON:\n"
-        f"{json.dumps(profile, ensure_ascii=False, indent=2)}\n\n"
-        "Return the required JSON schema only."
+        "Make a US resume from these student facts only.\n\n"
+        f"Target role: {target}\n"
+        f"Full name: {profile['full_name']}\n"
+        f"Email: {profile['email']}\n"
+        f"Phone: {profile['phone'] or 'not given'}\n"
+        f"Location: {profile['location'] or 'not given'}\n"
+        f"LinkedIn: {profile['linkedin'] or 'not given'}\n"
+        f"Portfolio: {profile['portfolio'] or 'not given'}\n"
+        f"Skills: {profile['skills'] or 'not given'}\n"
+        f"Summary notes: {profile['summary_notes'] or 'not given'}\n"
+        f"Projects: {profile['projects'] or 'not given'}\n"
+        f"Certifications: {profile['certifications'] or 'not given'}\n"
+        f"Languages: {profile['languages'] or 'not given'}\n"
+        f"Achievements: {profile['achievements'] or 'not given'}\n"
+        f"Education JSON: {json.dumps(profile['education'], ensure_ascii=False)}\n"
+        f"Experience JSON: {json.dumps(profile['experience'], ensure_ascii=False)}\n\n"
+        "Task:\n"
+        "1) Write a clear summary and headline for the target role.\n"
+        "2) Polish experience/education/projects using only given facts.\n"
+        "3) Build a clean skills list.\n"
+        "4) Create complete plain_text resume.\n"
+        "5) Use simple clear English.\n"
+        "Return JSON only."
     )
 
     req_body = {
@@ -101,7 +119,7 @@ def call_cv_openai(data, openai_api_key, openai_model="gpt-4o-mini"):
             {"role": "system", "content": SYSTEM_SCRIPT},
             {"role": "user", "content": user_text},
         ],
-        "temperature": 0.4,
+        "temperature": 0.3,
         "response_format": {"type": "json_object"},
     }
 
@@ -122,7 +140,7 @@ def call_cv_openai(data, openai_api_key, openai_model="gpt-4o-mini"):
             parsed = json.loads(content)
     except HTTPError as e:
         detail = e.read().decode("utf-8", errors="ignore") if hasattr(e, "read") else str(e)
-        return False, {"message": f"OpenAI HTTP error: {detail[:400]}"}
+        return False, {"message": friendly_openai_error(detail, e.code)}
     except (URLError, KeyError, ValueError, TimeoutError) as e:
         return False, {"message": f"OpenAI request failed: {str(e)}"}
 
